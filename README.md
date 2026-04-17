@@ -1,6 +1,6 @@
 # instant CLI
 
-Zero-friction infrastructure CLI for [instant.dev](https://instant.dev).
+Zero-friction infrastructure CLI for [instanode.dev](https://instanode.dev).
 
 ## Install
 
@@ -17,7 +17,7 @@ instant nosql new              # Provision a MongoDB document store
 instant queue new              # Provision a NATS JetStream queue
 instant resources              # List your provisioned resources (requires login)
 instant status                 # Show locally tracked resources
-instant login                  # Log in to your instant.dev account
+instant login                  # Log in to your instanode.dev account
 instant whoami                 # Show current account
 ```
 
