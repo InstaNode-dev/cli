@@ -91,11 +91,13 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 }
 
 // provisionResponse is the shape returned by POST /{service}/new endpoints.
+// /webhook/new returns receive_url instead of connection_url.
 type provisionResponse struct {
 	OK            bool   `json:"ok"`
 	Token         string `json:"token"`
 	Name          string `json:"name"`
 	ConnectionURL string `json:"connection_url"`
+	ReceiveURL    string `json:"receive_url"`
 	Tier          string `json:"tier"`
 	Note          string `json:"note"`
 	Upgrade       string `json:"upgrade"`

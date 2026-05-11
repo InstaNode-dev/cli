@@ -82,8 +82,9 @@ func initConfig() {
 	}
 
 	// Wire up the auth transport — no-ops when unauthenticated.
-	apiKey := ""
-	if cfg != nil {
+	// Priority: INSTANT_TOKEN env var > saved config (instant login).
+	apiKey := os.Getenv("INSTANT_TOKEN")
+	if apiKey == "" && cfg != nil {
 		apiKey = cfg.APIKey
 	}
 	HTTPClient = &http.Client{
