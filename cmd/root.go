@@ -44,17 +44,19 @@ var rootCmd = &cobra.Command{
 Provision databases, caches, queues, and document stores with a single command.
 No account required to get started. Log in with 'instant login' to persist resources.
 
+Every provisioning command requires a --name flag (1–64 chars).
+
 Examples:
-  instant db new               Provision a Postgres database (+ pgvector)
-  instant cache new            Provision a Redis cache
-  instant nosql new            Provision a MongoDB document store
-  instant queue new            Provision a NATS JetStream queue
-  instant resources            List your provisioned resources (requires login)
-  instant status               Show locally tracked resources
-  instant login                Log in to your instant.dev account
-  instant logout               Remove locally saved credentials
-  instant whoami               Show current account
-  instant upgrade              Open the upgrade page
+  instant db new --name app-db        Provision a Postgres database (+ pgvector)
+  instant cache new --name app-cache  Provision a Redis cache
+  instant nosql new --name app-docs   Provision a MongoDB document store
+  instant queue new --name app-jobs   Provision a NATS JetStream queue
+  instant resources                   List your provisioned resources (requires login)
+  instant status                      Show locally tracked resources
+  instant login                       Log in to your instant.dev account
+  instant logout                      Remove locally saved credentials
+  instant whoami                      Show current account
+  instant upgrade                     Open the upgrade page
 `,
 }
 
