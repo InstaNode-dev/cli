@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"text/tabwriter"
 
 	"github.com/instant-dev/cli/internal/tokens"
@@ -14,10 +15,39 @@ import (
 )
 
 // ── Provisioning subcommand groups ───────────────────────────────────────────
-// instant db new [name]
-// instant cache new [name]
-// instant nosql new [name]
-// instant queue new [name]
+// instant db new --name <name>
+// instant cache new --name <name>
+// instant nosql new --name <name>
+// instant queue new --name <name>
+//
+// The resource `name` is REQUIRED on every provisioning endpoint. The server
+// enforces 1–64 chars matching nameRegexp and rejects an omitted name with
+// HTTP 400; the CLI marks --name required so the error surfaces locally
+// before any API round trip.
+
+// nameMaxLen and nameRegexp mirror the server-side resource-name contract
+// (1–64 chars, must start with an alphanumeric character).
+const nameMaxLen = 64
+
+var nameRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]*$`)
+
+// resourceName is bound to the required --name flag on every `new` command.
+var resourceName string
+
+// validateResourceName applies the server-side name contract locally so the
+// CLI fails fast with a clear message instead of a bare HTTP 400.
+func validateResourceName(name string) error {
+	if name == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if len(name) > nameMaxLen {
+		return fmt.Errorf("--name must be 1–%d characters (got %d)", nameMaxLen, len(name))
+	}
+	if !nameRegexp.MatchString(name) {
+		return fmt.Errorf("--name %q is invalid: must match %s", name, nameRegexp.String())
+	}
+	return nil
+}
 
 var (
 	dbCmd    = &cobra.Command{Use: "db", Short: "Manage Postgres database resources"}
@@ -27,40 +57,45 @@ var (
 )
 
 var dbNewCmd = &cobra.Command{
-	Use:   "new [name]",
-	Short: "Provision a Postgres database (+ pgvector)",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  makeProvisionCmd("/db/new", "db"),
+	Use:     "new --name <name>",
+	Short:   "Provision a Postgres database (+ pgvector)",
+	Example: "  instant db new --name app-db",
+	Args:    cobra.NoArgs,
+	RunE:    makeProvisionCmd("/db/new", "db"),
 }
 
 var cacheNewCmd = &cobra.Command{
-	Use:   "new [name]",
-	Short: "Provision a Redis cache",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  makeProvisionCmd("/cache/new", "cache"),
+	Use:     "new --name <name>",
+	Short:   "Provision a Redis cache",
+	Example: "  instant cache new --name app-cache",
+	Args:    cobra.NoArgs,
+	RunE:    makeProvisionCmd("/cache/new", "cache"),
 }
 
 var nosqlNewCmd = &cobra.Command{
-	Use:   "new [name]",
-	Short: "Provision a MongoDB document store",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  makeProvisionCmd("/nosql/new", "nosql"),
+	Use:     "new --name <name>",
+	Short:   "Provision a MongoDB document store",
+	Example: "  instant nosql new --name app-docs",
+	Args:    cobra.NoArgs,
+	RunE:    makeProvisionCmd("/nosql/new", "nosql"),
 }
 
 var queueNewCmd = &cobra.Command{
-	Use:   "new [name]",
-	Short: "Provision a NATS JetStream queue",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  makeProvisionCmd("/queue/new", "queue"),
+	Use:     "new --name <name>",
+	Short:   "Provision a NATS JetStream queue",
+	Example: "  instant queue new --name app-jobs",
+	Args:    cobra.NoArgs,
+	RunE:    makeProvisionCmd("/queue/new", "queue"),
 }
 
 // makeProvisionCmd returns a RunE function that POSTs to the given endpoint
-// and prints the provisioned connection URL.
+// and prints the provisioned connection URL. The resource name comes from the
+// required --name flag.
 func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		name := resourceType
-		if len(args) == 1 {
-			name = args[0]
+		name := resourceName
+		if err := validateResourceName(name); err != nil {
+			return err
 		}
 
 		creds, err := provisionResource(endpoint, name)
@@ -137,10 +172,10 @@ var statusCmd = &cobra.Command{
 	Long: `Display all resources saved in ~/.instant-tokens.
 
 Resources are saved automatically when you run:
-  instant db new
-  instant cache new
-  instant nosql new
-  instant queue new
+  instant db new --name <name>
+  instant cache new --name <name>
+  instant nosql new --name <name>
+  instant queue new --name <name>
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := tokens.Load()
@@ -170,6 +205,13 @@ Resources are saved automatically when you run:
 }
 
 func init() {
+	// --name is REQUIRED on every provisioning command. Cobra surfaces a
+	// clear `required flag(s) "name" not set` error before RunE runs.
+	for _, c := range []*cobra.Command{dbNewCmd, cacheNewCmd, nosqlNewCmd, queueNewCmd} {
+		c.Flags().StringVar(&resourceName, "name", "", "Resource name (required, 1–64 chars, matches ^[A-Za-z0-9][A-Za-z0-9 _-]*$)")
+		_ = c.MarkFlagRequired("name")
+	}
+
 	dbCmd.AddCommand(dbNewCmd)
 	cacheCmd.AddCommand(cacheNewCmd)
 	nosqlCmd.AddCommand(nosqlNewCmd)
