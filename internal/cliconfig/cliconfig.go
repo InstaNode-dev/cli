@@ -33,7 +33,7 @@ type Config struct {
 	// TeamName is the team name, if the user belongs to a team.
 	TeamName string `json:"team_name,omitempty"`
 
-	// APIBaseURL overrides the default https://instant.dev endpoint.
+	// APIBaseURL overrides the default https://api.instanode.dev endpoint.
 	// Populated when INSTANT_API_URL env var was set at login time.
 	APIBaseURL string `json:"api_base_url,omitempty"`
 
