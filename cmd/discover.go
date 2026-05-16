@@ -15,7 +15,7 @@ import (
 var resourcesCmd = &cobra.Command{
 	Use:   "resources",
 	Short: "List your provisioned resources",
-	Long: `List all resources associated with your instant.dev account.
+	Long: `List all resources associated with your instanode.dev account.
 
 Requires login. Run 'instant login' first if you haven't already.
 

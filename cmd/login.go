@@ -24,8 +24,8 @@ const pollTimeout = 10 * time.Minute
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Log in to instant.dev and save credentials locally",
-	Long: `Open a browser to authenticate with instant.dev.
+	Short: "Log in to instanode.dev and save credentials locally",
+	Long: `Open a browser to authenticate with instanode.dev.
 
 The CLI creates a one-time login session, opens your browser,
 and waits while you sign in (GitHub OAuth or magic link).
@@ -42,7 +42,7 @@ your tier — or the CLI will detect it automatically on the next API call.
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Open the upgrade page to increase your plan limits",
-	Long: `Open the instant.dev upgrade page in your browser.
+	Long: `Open the instanode.dev upgrade page in your browser.
 
 Your current anonymous tokens are passed so the upgrade page can
 show exactly which resources you have running and pre-fill your plan.

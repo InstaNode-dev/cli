@@ -10,12 +10,12 @@ import (
 	"github.com/instant-dev/cli/internal/cliconfig"
 )
 
-// APIBaseURL is the instant.dev API base URL.
+// APIBaseURL is the instanode.dev API base URL.
 // Resolved at init from (in priority order):
 //  1. INSTANT_API_URL env var
 //  2. ~/.instant-config api_base_url
-//  3. Default: https://instant.dev
-var APIBaseURL = "https://instant.dev"
+//  3. Default: https://api.instanode.dev
+var APIBaseURL = "https://api.instanode.dev"
 
 // authTransport adds the Authorization header to every request when the user
 // is logged in. Anonymous requests are sent without a header.
@@ -38,8 +38,8 @@ var HTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 var rootCmd = &cobra.Command{
 	Use:   "instant",
-	Short: "instant.dev CLI — zero-friction developer infrastructure",
-	Long: `instant.dev CLI
+	Short: "instanode.dev CLI — zero-friction developer infrastructure",
+	Long: `instanode.dev CLI
 
 Provision databases, caches, queues, and document stores with a single command.
 No account required to get started. Log in with 'instant login' to persist resources.
@@ -51,7 +51,7 @@ Examples:
   instant queue new            Provision a NATS JetStream queue
   instant resources            List your provisioned resources (requires login)
   instant status               Show locally tracked resources
-  instant login                Log in to your instant.dev account
+  instant login                Log in to your instanode.dev account
   instant logout               Remove locally saved credentials
   instant whoami               Show current account
   instant upgrade              Open the upgrade page
