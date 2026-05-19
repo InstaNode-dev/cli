@@ -54,6 +54,14 @@ type mockAPI struct {
 	requireAuth bool
 	// failProvision, when set, makes the next provision return this status.
 	failProvisionStatus int
+	// failListStatus, when set, makes GET /api/v1/resources return this
+	// status (without consuming it — every list request fails until the
+	// caller resets it). Used to drive T16 P1-4 regression tests where the
+	// CLI MUST abort rather than silently re-provision on list failure.
+	failListStatus int
+	// connURLOverride lets a test mint a custom connection_url (hostile
+	// values for the T16 P1-5 shell-quoting regression). Empty == default.
+	connURLOverride string
 	// authToken is the bearer token the server expects when requireAuth is on.
 	authToken string
 	// authComplete drives the /auth/cli/:id poll: false => 202 pending,
@@ -231,7 +239,14 @@ func (m *mockAPI) handleProvision(w http.ResponseWriter, r *http.Request, rtype 
 		res.ReceiveURL = "https://hooks.instanode.dev/" + token
 		resp["receive_url"] = res.ReceiveURL
 	} else {
-		res.ConnectionURL = mockConnURL(rtype, token)
+		m.mu.Lock()
+		override := m.connURLOverride
+		m.mu.Unlock()
+		if override != "" {
+			res.ConnectionURL = override
+		} else {
+			res.ConnectionURL = mockConnURL(rtype, token)
+		}
 		resp["connection_url"] = res.ConnectionURL
 	}
 
@@ -261,9 +276,25 @@ func mockConnURL(rtype, token string) string {
 }
 
 func (m *mockAPI) handleListResources(w http.ResponseWriter, r *http.Request) {
-	if m.requireAuth && r.Header.Get("Authorization") == "" {
-		w.WriteHeader(http.StatusUnauthorized)
+	// Forced-failure path (T16 P1-4 regression): the test wants to assert
+	// that `up` aborts on a list-fetch failure instead of provisioning blind.
+	m.mu.Lock()
+	failStatus := m.failListStatus
+	m.mu.Unlock()
+	if failStatus != 0 {
+		writeJSON(w, failStatus, map[string]any{
+			"ok": false, "error": "simulated list failure",
+		})
 		return
+	}
+	if m.requireAuth {
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got == "" || (m.authToken != "" && got != m.authToken) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"ok": false, "error": "authentication required",
+			})
+			return
+		}
 	}
 	wantEnv := r.URL.Query().Get("env")
 

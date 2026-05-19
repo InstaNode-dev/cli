@@ -6,12 +6,28 @@ package cliconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/instant-dev/cli/internal/secretstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain installs an in-memory secret backend so cliconfig_test never
+// touches the real OS keychain. Mirrors the cmd-package test setup.
+func TestMain(m *testing.M) {
+	secretstore.UseMemoryBackend()
+	os.Exit(m.Run())
+}
+
+// resetSecretStore re-installs a clean in-memory secret backend. Called at
+// the start of each test that depends on "nothing has been stored yet".
+func resetSecretStore(t *testing.T) {
+	t.Helper()
+	secretstore.UseMemoryBackend()
+}
 
 // newTempConfig returns a Config whose path is set to a file inside t.TempDir().
 // The file does NOT yet exist on disk.
@@ -25,10 +41,8 @@ func newTempConfig(t *testing.T) *Config {
 // ---------------------------------------------------------------------------
 
 func TestLoad_NonExistentFileReturnsEmptyConfig(t *testing.T) {
+	resetSecretStore(t)
 	// Point configPath at a path that definitely doesn't exist.
-	// We can't override configPath() easily, but Load returns an empty Config
-	// when the file is absent — simulate that by calling it with HOME set to a
-	// fresh temp dir so ~/.instant-config won't exist.
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -106,8 +120,112 @@ func TestSave_FileIsValidJSON(t *testing.T) {
 
 	data, err := os.ReadFile(cfg.path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"api_key"`)
-	assert.Contains(t, string(data), "inst_live_jsontest")
+	// After the T16 P1-1 fix, the legacy `"api_key"` field is no longer
+	// written to disk — the bearer token routes through secretstore (the
+	// in-memory backend during tests). The on-disk file must contain ONLY
+	// the non-secret display fields.
+	assert.NotContains(t, string(data), `"api_key"`,
+		"plaintext api_key must NOT be written to disk when secretstore is available")
+	assert.NotContains(t, string(data), "inst_live_jsontest",
+		"plaintext api_key value must not appear on disk")
+	// And it must be syntactically valid JSON.
+	assert.Contains(t, string(data), `"saved_at"`)
+}
+
+// TestSave_NoPlaintextAPIKeyOnDisk_KeychainBackend is the explicit T16 P1-1
+// regression assertion: with a working secret backend in place, a saved
+// config has zero traces of the bearer token in its on-disk JSON.
+func TestSave_NoPlaintextAPIKeyOnDisk_KeychainBackend(t *testing.T) {
+	cfg := newTempConfig(t)
+	cfg.APIKey = "inst_live_secret_that_must_not_leak"
+	cfg.Email = "x@example.com"
+
+	require.NoError(t, cfg.Save())
+
+	data, err := os.ReadFile(cfg.path)
+	require.NoError(t, err)
+
+	body := string(data)
+	if strings.Contains(body, "inst_live_secret_that_must_not_leak") {
+		t.Fatalf("BUG: bearer token leaked to disk: %s", body)
+	}
+	if strings.Contains(body, FallbackAPIKeyField) {
+		t.Fatalf("BUG: fallback field written despite keychain being available: %s", body)
+	}
+}
+
+// TestSave_FallbackOnDiskWhenKeychainMissing asserts the disk fallback path:
+// if secretstore.Set fails (no backend), the key MUST land in
+// FallbackAPIKey + survive a Load round-trip. Sanity-checks the disk
+// fallback for headless Linux / CI environments.
+func TestSave_FallbackOnDiskWhenKeychainMissing(t *testing.T) {
+	prev := secretstore.Name()
+	secretstore.Use(nil) // simulates "no keychain"
+	t.Cleanup(func() {
+		if prev == "memory" {
+			secretstore.UseMemoryBackend()
+		}
+	})
+
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfg := &Config{path: filepath.Join(dir, ".instant-config"),
+		APIKey: "inst_live_fallback_secret", Email: "fb@example.com"}
+	require.NoError(t, cfg.Save())
+
+	data, err := os.ReadFile(cfg.path)
+	require.NoError(t, err)
+	body := string(data)
+	assert.Contains(t, body, FallbackAPIKeyField,
+		"fallback field MUST be present when no keychain backend is wired")
+	assert.Contains(t, body, "inst_live_fallback_secret",
+		"fallback path must persist the key on disk (warning emitted to stderr)")
+	// File mode must still be 0600 even on the fallback path.
+	info, err := os.Stat(cfg.path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+
+	// Round-trip: Load must restore APIKey from FallbackAPIKey.
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "inst_live_fallback_secret", loaded.APIKey)
+	assert.Equal(t, "file-fallback", loaded.SecretBackendName())
+}
+
+// TestLegacyAPIKeyMigratesOnNextSave covers the upgrade path: an existing
+// install with `"api_key"` on disk (pre-2026-05-20) must be migrated into
+// secretstore on the next Save() and the legacy field cleared.
+func TestLegacyAPIKeyMigratesOnNextSave(t *testing.T) {
+	secretstore.UseMemoryBackend()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	path := filepath.Join(dir, ".instant-config")
+
+	// Write a config file the OLD way (legacy api_key field).
+	legacy := `{"api_key":"inst_live_legacy123","email":"legacy@example.com"}`
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0600))
+
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "inst_live_legacy123", loaded.APIKey,
+		"Load must pick up the legacy api_key field")
+	assert.Equal(t, "inst_live_legacy123", loaded.LegacyAPIKey,
+		"the legacy field is preserved on the struct until next Save")
+
+	// Save migrates: legacy field cleared, secretstore now holds the key.
+	loaded.path = path
+	require.NoError(t, loaded.Save())
+
+	disk, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(disk), `"api_key"`,
+		"after Save, the legacy api_key field must be gone from disk")
+
+	v, err := secretstore.Get()
+	require.NoError(t, err)
+	assert.Equal(t, "inst_live_legacy123", v,
+		"after Save, secretstore must hold the migrated key")
 }
 
 func TestSave_UpdatesSavedAt(t *testing.T) {
@@ -125,6 +243,7 @@ func TestSave_UpdatesSavedAt(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClear_RemovesExistingFile(t *testing.T) {
+	resetSecretStore(t)
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -164,7 +283,7 @@ func TestRoundTrip_SaveThenLoadReturnsSameStruct(t *testing.T) {
 		Email:      "rt@example.com",
 		Tier:       "team",
 		TeamName:   "Acme",
-		APIBaseURL: "https://api.staging.instant.dev",
+		APIBaseURL: "https://api.staging.instanode.dev",
 	}
 	// Use the HOME-based path so Load() can find it.
 	original.path = filepath.Join(dir, ".instant-config")

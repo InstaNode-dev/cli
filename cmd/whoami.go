@@ -3,8 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/instant-dev/cli/internal/cliconfig"
+	"github.com/instant-dev/cli/internal/secretstore"
+	"github.com/spf13/cobra"
 )
 
 var whoamiCmd = &cobra.Command{
@@ -28,7 +29,11 @@ var whoamiCmd = &cobra.Command{
 			fmt.Printf("Team:     %s\n", cfg.TeamName)
 		}
 		fmt.Printf("API URL:  %s\n", cfg.APIBaseURL)
-		fmt.Printf("Key:      %s…\n", cfg.APIKey[:min(16, len(cfg.APIKey))])
+		// T16 P1-1: never display more than 8 chars of the bearer token,
+		// and surface which backend holds it so the user can tell
+		// "macOS Keychain" from "on-disk fallback".
+		fmt.Printf("Key:      %s\n", secretstore.TruncateForDisplay(cfg.APIKey))
+		fmt.Printf("Stored:   %s\n", cfg.SecretBackendName())
 		return nil
 	},
 }
@@ -58,11 +63,4 @@ var logoutCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(whoamiCmd)
 	rootCmd.AddCommand(logoutCmd)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

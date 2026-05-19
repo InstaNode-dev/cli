@@ -139,6 +139,10 @@ type provisionResponse struct {
 }
 
 // provisionResource calls POST {APIBaseURL}{endpoint} and returns parsed credentials.
+//
+// T16 P1-2: a 401 against an authenticated request returns the uniform
+// errSessionExpired() error so the exit-code contract is consistent across
+// `resources`, `up`, and direct provisioning.
 func provisionResource(endpoint, name string) (*provisionResponse, error) {
 	url := APIBaseURL + endpoint
 	body, _ := json.Marshal(map[string]string{"name": name})
@@ -150,8 +154,11 @@ func provisionResource(endpoint, name string) (*provisionResponse, error) {
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized && haveAuth() {
+		return nil, errSessionExpired()
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 
 	var result provisionResponse

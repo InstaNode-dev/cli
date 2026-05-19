@@ -34,14 +34,23 @@ Use 'instant status' to see resources tracked locally (no login required).
 		}
 		defer resp.Body.Close()
 
+		// T16 P1-2 — uniform 401 handling. Three different code paths used
+		// to do three different things on 401 (resources: exit 0, up: silent
+		// re-provision, provision: bare error). Now:
+		//   - anonymous caller: print 'not logged in' hint, exit 3 (auth req)
+		//   - authenticated caller (stale token): print 'session expired',
+		//     exit 3 (auth req) — same code so agents have one branch.
 		if resp.StatusCode == http.StatusUnauthorized {
+			if haveAuth() {
+				return errSessionExpired()
+			}
 			fmt.Fprintln(os.Stderr, "Not logged in. Run `instant login` first.")
-			return nil
+			return errAuthRequired("authentication required — run `instant login` first")
 		}
 
 		raw, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, raw)
+			return fmt.Errorf("server returned %d: %s", resp.StatusCode, truncate(string(raw), 200))
 		}
 
 		var result struct {

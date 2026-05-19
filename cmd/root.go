@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/instant-dev/cli/internal/cliconfig"
+	"github.com/instant-dev/cli/internal/secretstore"
 )
 
 // APIBaseURL is the instanode.dev API base URL.
@@ -70,6 +71,12 @@ func init() {
 }
 
 func initConfig() {
+	// Wire up the secret backend BEFORE loading cliconfig (cliconfig.Load
+	// reads the bearer token via secretstore.Get). On test runs HOME points
+	// to a temp dir and INSTANT_DISABLE_KEYCHAIN=1 is set; the OS keychain
+	// is then bypassed and the cliconfig file-fallback path is exercised.
+	secretstore.UseDefault()
+
 	// Load saved CLI credentials (may be empty = anonymous).
 	cfg, err := cliconfig.Load()
 	if err != nil {
