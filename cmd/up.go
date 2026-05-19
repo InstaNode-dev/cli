@@ -90,7 +90,8 @@ Exit codes:
   0  every resource reconciled successfully
   1  manifest parse / file errors
   2  one or more resources failed to provision
-  3  authentication required for the requested env (e.g. non-production)
+  3  authentication required for the requested env (e.g. non-production),
+     OR the saved session has expired and needs re-login
 
 Examples:
   instant up
@@ -103,10 +104,10 @@ Examples:
 
 // flag values
 var (
-	upFile       string
-	upEnv        string
-	upEmitEnv    bool
-	upDryRun     bool
+	upFile    string
+	upEnv     string
+	upEmitEnv bool
+	upDryRun  bool
 )
 
 func init() {
@@ -134,8 +135,9 @@ func runUp(_ *cobra.Command, _ []string) error {
 	// Non-production env requires auth (server enforces this; we surface a
 	// friendly hint locally so the founder doesn't waste a round trip).
 	if env != "production" && !haveAuth() {
-		return fmt.Errorf("env %q requires an INSTANT_TOKEN — run `instant login` "+
-			"or set INSTANT_TOKEN to a Personal Access Token", env)
+		return errAuthRequired(fmt.Sprintf(
+			"env %q requires an INSTANT_TOKEN — run `instant login` or set INSTANT_TOKEN to a Personal Access Token",
+			env))
 	}
 
 	// Print plan up front.
@@ -149,9 +151,22 @@ func runUp(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Fetch current resources once. Anonymous callers get an empty list (404
-	// / 401 — both treated as "nothing to reuse"); errors are non-fatal.
-	existing := fetchExistingResources(env)
+	// T16 P1-4 — Fetch current resources once. If the list-fetch fails for
+	// ANY reason (401, 429, 5xx, network), we MUST abort — re-provisioning
+	// blind would create duplicate resources, burn quota, and break the
+	// idempotency contract `up` advertises.
+	//
+	// 401 is special: surface the uniform "session expired" error so an
+	// agent script can branch on the same exit code everywhere.
+	existing, listErr := fetchExistingResources(env)
+	if listErr != nil {
+		if errors.Is(listErr, errSessionExpiredSentinel) {
+			return errSessionExpired()
+		}
+		return errResourceFailed(fmt.Errorf(
+			"could not fetch existing resources (%w); refusing to provision blind. Retry or run `instant resources` to check status",
+			listErr))
+	}
 
 	var hadErr bool
 	for _, decl := range manifest.Resources {
@@ -174,6 +189,9 @@ func runUp(_ *cobra.Command, _ []string) error {
 		}
 		creds, err := provisionForUp(decl, env)
 		if err != nil {
+			if errors.Is(err, errSessionExpiredSentinel) {
+				return errSessionExpired()
+			}
 			fmt.Fprintf(os.Stderr, "  ERROR %-9s %s: %v\n", decl.Type, decl.Name, err)
 			hadErr = true
 			continue
@@ -187,7 +205,7 @@ func runUp(_ *cobra.Command, _ []string) error {
 	}
 
 	if hadErr {
-		return errors.New("one or more resources failed to reconcile")
+		return errResourceFailed(errors.New("one or more resources failed to reconcile"))
 	}
 	return nil
 }
@@ -235,25 +253,44 @@ func haveAuth() bool {
 	return os.Getenv("INSTANT_TOKEN") != ""
 }
 
-// fetchExistingResources returns the team's resources for the given env, or
-// nil on any failure (anonymous, network, etc.). Failures here MUST NOT
-// block reconciliation — we simply provision fresh.
-func fetchExistingResources(env string) []resourceListItem {
+// errSessionExpiredSentinel is a private marker error returned by the
+// fetch helpers when the server returned 401 to an authenticated request.
+// Callers translate this into the user-facing errSessionExpired() so the
+// exit code stays uniform (3).
+var errSessionExpiredSentinel = errors.New("session expired")
+
+// fetchExistingResources returns the team's resources for the given env,
+// or an error explaining why it couldn't determine the state. The CALLER
+// must treat any non-nil error as fatal — we MUST NOT swallow errors and
+// re-provision blind (T16 P1-4).
+func fetchExistingResources(env string) ([]resourceListItem, error) {
 	url := APIBaseURL + "/api/v1/resources?env=" + env
 	resp, err := HTTPClient.Get(url)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// 401: unauthenticated. For anonymous callers this is expected (no
+	// resources to reuse, no error); for callers with a token it means the
+	// session is stale.
+	if resp.StatusCode == http.StatusUnauthorized {
+		if haveAuth() {
+			return nil, errSessionExpiredSentinel
+		}
+		// Anonymous: not an error, just nothing to reuse.
+		return nil, nil
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	var out resourceListResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil
+		return nil, fmt.Errorf("parsing list response: %w", err)
 	}
-	return out.Items
+	return out.Items, nil
 }
 
 // findExisting returns the existing resource matching (type, name, env), or
@@ -302,6 +339,9 @@ func provisionForUp(decl manifestRsrc, env string) (*provisionResponse, error) {
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized && haveAuth() {
+		return nil, errSessionExpiredSentinel
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("server %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
@@ -317,13 +357,28 @@ func provisionForUp(decl manifestRsrc, env string) (*provisionResponse, error) {
 
 // emit writes an agent-friendly line for one resource. In --emit-env mode,
 // only the export line is printed (so `eval $(instant up --emit-env)` works).
+//
+// T16 P1-5: shell-safe quoting — values are POSIX single-quoted (not
+// Go-%q'd), and the export NAME is sanitized to a valid shell identifier.
+// A name that sanitizes to empty is rejected (the `export = ...` line
+// would be a shell syntax error).
 func emit(decl manifestRsrc, url, action, token string) {
 	exportName := decl.Export
 	if exportName == "" {
-		exportName = strings.ToUpper(strings.ReplaceAll(decl.Name, "-", "_")) + "_URL"
+		exportName = sanitizeExportName(decl.Name) + "_URL"
+	}
+	if !isValidShellIdentifier(exportName) {
+		// Fallback: sanitize the user-supplied export name too.
+		exportName = sanitizeExportName(exportName)
+	}
+	if !isValidShellIdentifier(exportName) {
+		fmt.Fprintf(os.Stderr,
+			"  ERROR %-9s %s: cannot derive a valid shell variable name from %q — set `export:` in manifest\n",
+			decl.Type, decl.Name, decl.Name)
+		return
 	}
 	if upEmitEnv {
-		fmt.Printf("export %s=%q\n", exportName, url)
+		fmt.Printf("export %s=%s\n", exportName, shellQuote(url))
 		return
 	}
 	short := token
@@ -331,7 +386,7 @@ func emit(decl manifestRsrc, url, action, token string) {
 		short = short[:8]
 	}
 	fmt.Fprintf(os.Stderr, "  %-9s %-9s %s (%s)\n", action, decl.Type, decl.Name, short)
-	fmt.Printf("export %s=%q\n", exportName, url)
+	fmt.Printf("export %s=%s\n", exportName, shellQuote(url))
 }
 
 // truncate clamps a string for error messages.

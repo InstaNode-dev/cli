@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/instant-dev/cli/internal/secretstore"
 	"github.com/instant-dev/cli/internal/tokens"
 	"github.com/spf13/cobra"
 )
@@ -58,6 +59,11 @@ func TestMain(m *testing.M) {
 	// Never let an ambient token leak into the hermetic suite.
 	os.Unsetenv("INSTANT_TOKEN")
 	os.Unsetenv("INSTANT_API_URL")
+	// Pin the secret backend to an in-memory store so cliconfig.Save /
+	// .Load never touch the developer's OS keychain. Also disable the
+	// real-keychain probe (no DBus / Security framework calls).
+	os.Setenv("INSTANT_DISABLE_KEYCHAIN", "1")
+	secretstore.UseMemoryBackend()
 
 	code := m.Run()
 	_ = os.RemoveAll(tmpHome)
@@ -88,6 +94,9 @@ func newITContext(t *testing.T) *itContext {
 	home, _ := os.UserHomeDir()
 	_ = os.Remove(filepath.Join(home, ".instant-tokens"))
 	_ = os.Remove(filepath.Join(home, ".instant-config"))
+	// Reset the in-memory secret store so a token saved by a previous test
+	// doesn't leak into "I'm anonymous" assertions.
+	secretstore.UseMemoryBackend()
 
 	t.Cleanup(func() {
 		APIBaseURL, HTTPClient = prevURL, prevClient
@@ -616,22 +625,31 @@ func TestIntegration_ResourcesEmpty(t *testing.T) {
 	}
 }
 
-// TestIntegration_ResourcesUnauthorized asserts a 401 prints a friendly hint
-// and exits 0 (the CLI treats "not logged in" as informational, not fatal).
+// TestIntegration_ResourcesUnauthorized — T16 P1-2 fix.
+// Anonymous caller (no auth) on a 401 prints a friendly hint AND exits with
+// ExitAuthRequired (3) so an agent can branch on the code. The previous
+// behaviour was exit 0, which silently masked a stale-token situation.
 func TestIntegration_ResourcesUnauthorized(t *testing.T) {
 	c := newITContext(t)
 	c.mock.mu.Lock()
 	c.mock.requireAuth = true
 	c.mock.mu.Unlock()
 
+	var gotErr error
 	_, stderr := captureStdout(t, func() {
 		_, _, err := run("resources")
-		if err != nil {
-			t.Fatalf("resources unauthorized should exit 0, got err: %v", err)
-		}
+		gotErr = err
 	})
-	if !strings.Contains(strings.ToLower(stderr), "logged in") {
-		t.Errorf("resources 401: expected 'logged in' hint, stderr=%q", stderr)
+	if gotErr == nil {
+		t.Fatal("resources 401 must now return a non-nil error (auth required)")
+	}
+	if code := ExitCodeFor(gotErr); code != ExitAuthRequired {
+		t.Errorf("resources 401: expected exit code %d (ExitAuthRequired), got %d (err: %v)",
+			ExitAuthRequired, code, gotErr)
+	}
+	if !strings.Contains(strings.ToLower(stderr+gotErr.Error()), "log") {
+		t.Errorf("resources 401: expected a login-related hint, stderr=%q err=%q",
+			stderr, gotErr)
 	}
 }
 

@@ -8,8 +8,12 @@ import (
 )
 
 func main() {
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
 	}
+	// Translate any error returned by the cobra tree into the documented
+	// exit-code contract. A nil error exits 0; an *ExitCodeError carries its
+	// own code; anything else defaults to 1 (generic failure).
+	os.Exit(cmd.ExitCodeFor(err))
 }
