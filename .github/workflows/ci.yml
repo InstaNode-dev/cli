@@ -1,13 +1,23 @@
 name: CI
 
+# CI is a MANDATORY gate: the hermetic build + integration suite runs on
+# every push and pull request. A failure blocks the merge. The suite has no
+# network dependency (it drives an in-process mock of the agent API), so it
+# is fully deterministic in CI.
+#
+# Both `main` and `master` are listed: the repo's default branch is `master`,
+# and an earlier revision of this file watched only `main`, which meant CI
+# never actually ran. Listing both is intentional and safe.
+
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build-and-test:
+    name: build + integration gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,6 +26,15 @@ jobs:
         with:
           go-version: '1.23'
 
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test ./... -v -race -count=1
+      # The local gate (`make ci`) is identical to this CI gate:
+      #   build  -> go build ./...
+      #   vet    -> go vet ./...
+      #   test   -> go test ./... -v -race -count=1   (hermetic + integration)
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: integration suite (hermetic, mandatory)
+        run: go test ./... -v -race -count=1
