@@ -139,12 +139,27 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 			return fmt.Errorf("provisioning failed: %w", err)
 		}
 
-		// Save token locally for `instant status`.
+		// Save token locally for `instant status` + B15-P1 (7) anon-up
+		// idempotency. Type+Env are required so anonymous `up` can match
+		// (type, name, env) on subsequent runs without an API list call.
+		// Env is populated from the resolved provision env when the server
+		// echoed it back (api ≥ 2026-05-13 / migration 026); falls back to
+		// "development" — the platform default — when omitted.
 		if store, loadErr := tokens.Load(); loadErr == nil {
+			urlOrReceive := creds.ConnectionURL
+			if urlOrReceive == "" {
+				urlOrReceive = creds.ReceiveURL
+			}
+			env := creds.Env
+			if env == "" {
+				env = "development"
+			}
 			_ = store.Add(tokens.Entry{
 				Token:  creds.Token,
 				Name:   creds.Name,
-				URL:    creds.ConnectionURL,
+				Type:   resourceType,
+				Env:    env,
+				URL:    urlOrReceive,
 				Source: "provision",
 			})
 		}
@@ -170,8 +185,15 @@ type provisionResponse struct {
 	ConnectionURL string `json:"connection_url"`
 	ReceiveURL    string `json:"receive_url"`
 	Tier          string `json:"tier"`
-	Note          string `json:"note"`
-	Upgrade       string `json:"upgrade"`
+	// Env is the resolved provisioning environment the server echoed back
+	// (api ≥ 2026-05-13 / migration 026). May be empty against older builds;
+	// callers default to "development" — the platform's lowest-stakes
+	// default (CLAUDE.md rule 11) — when empty. Used to key the local
+	// tokens cache so B15-P1 (7) anonymous-up idempotency can match on
+	// (type, name, env) without an API list call.
+	Env     string `json:"env"`
+	Note    string `json:"note"`
+	Upgrade string `json:"upgrade"`
 }
 
 // provisionResource calls POST {APIBaseURL}{endpoint} and returns parsed credentials.
@@ -237,10 +259,21 @@ With --json, output is a machine-readable JSON array of token entries
 		}
 
 		// T16 P3 — machine-readable output. Empty list emits `[]`.
+		//
+		// B15-P1 (9) — store.Entries is a nil slice when ~/.instant-tokens
+		// has never been written; json.Encoder serializes a nil []T as
+		// `null`, which crashes `instant status --json | jq '.[] | …'`.
+		// Force the empty-slice literal so agents can pipe the output
+		// unconditionally and `resources --json` / `status --json` share
+		// the same `[]` shape on empty stores.
 		if statusJSON {
+			entries := store.Entries
+			if entries == nil {
+				entries = []tokens.Entry{}
+			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(store.Entries)
+			return enc.Encode(entries)
 		}
 
 		if len(store.Entries) == 0 {

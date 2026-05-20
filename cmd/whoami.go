@@ -50,13 +50,18 @@ display form and the secret-backend name are surfaced.
 			return wrapJSONErr(cmd, err)
 		}
 
-		// B15-P0 (1) — INSTANT_TOKEN env var beats whatever cliconfig.Load
-		// resolved from the keychain / file fallback. Mirrors the precedence
-		// already implemented in cmd/root.go::initConfig (env → config) so
-		// users that drive the CLI via `INSTANT_TOKEN=… instant whoami`
-		// stop appearing anonymous. Whitespace is trimmed so a stray newline
-		// from `$(cat .pat)` doesn't break Authorization headers (B15-P1).
-		if envTok := strings.TrimSpace(os.Getenv("INSTANT_TOKEN")); envTok != "" {
+		// B15-P0 (1) / B15-P2 — auth token precedence: --token flag >
+		// INSTANT_TOKEN env > cliconfig (keychain/file). Mirrors the order
+		// already implemented in cmd/root.go::initConfig so `whoami` and
+		// the HTTP-client wiring agree on which token wins. Whitespace is
+		// trimmed at every source so a stray newline from `$(cat .pat)`
+		// doesn't break Authorization headers (B15-P1).
+		if flagTok := strings.TrimSpace(adHocToken); flagTok != "" {
+			cfg.APIKey = flagTok
+			if cfg.Tier == "" {
+				cfg.Tier = "flag-token"
+			}
+		} else if envTok := strings.TrimSpace(os.Getenv("INSTANT_TOKEN")); envTok != "" {
 			cfg.APIKey = envTok
 			// Mark it as authenticated even when the on-disk config is empty
 			// (typical for env-token / agent runs that never `instant login`).

@@ -22,6 +22,14 @@ var _ = httpListTimeout // documented constant; referenced in tests / future ref
 //  3. Default: https://api.instanode.dev
 var APIBaseURL = "https://api.instanode.dev"
 
+// adHocToken is bound to the global --token flag. B15-P2: ad-hoc auth
+// override that doesn't require exporting INSTANT_TOKEN or running
+// `instant login` — useful for one-off invocations and CI scripts that
+// want to inline a PAT. When set, it takes precedence over INSTANT_TOKEN
+// (which itself takes precedence over the saved cliconfig). Whitespace is
+// trimmed for parity with INSTANT_TOKEN (B15-P1 (8)).
+var adHocToken string
+
 // authTransport adds the Authorization header to every request when the user
 // is logged in. Anonymous requests are sent without a header.
 type authTransport struct {
@@ -130,6 +138,31 @@ func SetBuildInfo(version, commit, buildTime string) {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	// B15-P1 (10) — silence cobra's "Error: …\nUsage:\n…" block on every
+	// RunE failure. main.go owns the single stderr print of the error
+	// message, and the cobra usage dump is not actionable for runtime
+	// failures (a 429 quota error doesn't get fixed by changing flags).
+	// Cobra still reports flag-parse failures (e.g. unknown-flag, required-flag
+	// missing) via the FParseErrWhitelist path, which DO surface usage when
+	// relevant — so usability for "wrong-flag" cases is preserved.
+	//
+	// Without this the prior output for `instant resources` (no auth) was:
+	//   Error: authentication required ...     ← cobra
+	//   Usage:                                 ← cobra (irrelevant)
+	//     instant resources [flags]
+	//   ...
+	//   authentication required ...           ← main.go (duplicate)
+	// ≈15 lines of noise per failure. Now main.go prints once.
+	rootCmd.SilenceUsage = true
+	rootCmd.SilenceErrors = true
+
+	// B15-P2 — global --token flag for ad-hoc auth without exporting
+	// INSTANT_TOKEN. Persistent so every subcommand sees it; takes
+	// precedence over INSTANT_TOKEN and saved cliconfig. The bound var
+	// is consumed by initConfig (cobra.OnInitialize) which fires AFTER
+	// flag parsing — so the auth transport sees the flag value.
+	rootCmd.PersistentFlags().StringVar(&adHocToken, "token", "",
+		"Bearer token for this invocation (overrides INSTANT_TOKEN and saved login)")
 }
 
 func initConfig() {
@@ -153,11 +186,17 @@ func initConfig() {
 	}
 
 	// Wire up the auth transport — no-ops when unauthenticated.
-	// Priority: INSTANT_TOKEN env var > saved config (instant login).
-	// B15-P1: TrimSpace so `INSTANT_TOKEN=$(cat .pat)` (with trailing
-	// newline) doesn't produce an "Authorization: Bearer tok\n" header
-	// that the server rejects.
-	apiKey := strings.TrimSpace(os.Getenv("INSTANT_TOKEN"))
+	// Priority:
+	//   1. --token global flag (B15-P2 ad-hoc override)
+	//   2. INSTANT_TOKEN env var
+	//   3. saved config (instant login)
+	// B15-P1: TrimSpace at every source so `INSTANT_TOKEN=$(cat .pat)`
+	// or `--token "$(cat .pat)"` (with trailing newline) doesn't produce
+	// an "Authorization: Bearer tok\n" header that the server rejects.
+	apiKey := strings.TrimSpace(adHocToken)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("INSTANT_TOKEN"))
+	}
 	if apiKey == "" && cfg != nil {
 		apiKey = cfg.APIKey
 	}
