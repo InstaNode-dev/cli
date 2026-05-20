@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/instant-dev/cli/internal/cliconfig"
 	"github.com/instant-dev/cli/internal/secretstore"
@@ -46,7 +47,35 @@ display form and the secret-backend name are surfaced.
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := cliconfig.Load()
 		if err != nil {
-			return err
+			return wrapJSONErr(cmd, err)
+		}
+
+		// B15-P0 (1) — INSTANT_TOKEN env var beats whatever cliconfig.Load
+		// resolved from the keychain / file fallback. Mirrors the precedence
+		// already implemented in cmd/root.go::initConfig (env → config) so
+		// users that drive the CLI via `INSTANT_TOKEN=… instant whoami`
+		// stop appearing anonymous. Whitespace is trimmed so a stray newline
+		// from `$(cat .pat)` doesn't break Authorization headers (B15-P1).
+		if envTok := strings.TrimSpace(os.Getenv("INSTANT_TOKEN")); envTok != "" {
+			cfg.APIKey = envTok
+			// Mark it as authenticated even when the on-disk config is empty
+			// (typical for env-token / agent runs that never `instant login`).
+			if cfg.Tier == "" {
+				cfg.Tier = "env-token"
+			}
+		}
+
+		// B15-P1 — resolve api_url so --json never emits api_url:"".
+		// Priority: cfg.APIBaseURL > INSTANT_API_URL env > APIBaseURL package var > hardcoded default.
+		apiURL := cfg.APIBaseURL
+		if apiURL == "" {
+			apiURL = strings.TrimSpace(os.Getenv("INSTANT_API_URL"))
+		}
+		if apiURL == "" {
+			apiURL = APIBaseURL
+		}
+		if apiURL == "" {
+			apiURL = "https://api.instanode.dev"
 		}
 
 		if whoamiJSON {
@@ -55,7 +84,7 @@ display form and the secret-backend name are surfaced.
 				Email:         cfg.Email,
 				Tier:          cfg.EffectiveTier(),
 				TeamName:      cfg.TeamName,
-				APIURL:        cfg.APIBaseURL,
+				APIURL:        apiURL,
 				KeyDisplay:    secretstore.TruncateForDisplay(cfg.APIKey),
 				SecretBackend: cfg.SecretBackendName(),
 			}
@@ -75,7 +104,7 @@ display form and the secret-backend name are surfaced.
 		if cfg.TeamName != "" {
 			fmt.Printf("Team:     %s\n", cfg.TeamName)
 		}
-		fmt.Printf("API URL:  %s\n", cfg.APIBaseURL)
+		fmt.Printf("API URL:  %s\n", apiURL)
 		// T16 P1-1: never display more than 8 chars of the bearer token,
 		// and surface which backend holds it so the user can tell
 		// "macOS Keychain" from "on-disk fallback".

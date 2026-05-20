@@ -155,6 +155,9 @@ var endpointResourceType = map[string]string{
 	"/queue/new":   "queue",
 	"/storage/new": "storage",
 	"/webhook/new": "webhook",
+	// B15 — surface vector. The api stores vector resources as
+	// `resource_type=vector` (postgres backend with pgvector enabled).
+	"/vector/new": "vector",
 }
 
 // count returns the number of resources currently held (used by the sweep).
@@ -196,7 +199,7 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── credentials / delete by token ─────────────────────────────────────
+	// ── credentials / detail / delete by token ────────────────────────────
 	if strings.HasPrefix(path, "/api/v1/resources/") {
 		rest := strings.TrimPrefix(path, "/api/v1/resources/")
 		if strings.HasSuffix(rest, "/credentials") && r.Method == http.MethodGet {
@@ -205,6 +208,12 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Method == http.MethodDelete && !strings.Contains(rest, "/") {
 			m.handleDelete(w, rest)
+			return
+		}
+		// B15 — GET /api/v1/resources/:token returns the detail object
+		// (mirrors api/internal/handlers/resource.go GetResource).
+		if r.Method == http.MethodGet && !strings.Contains(rest, "/") {
+			m.handleDetail(w, rest)
 			return
 		}
 	}
@@ -392,6 +401,8 @@ func mockConnURL(rtype, token string) string {
 		return "nats://queue.instanode.dev:4222"
 	case "storage":
 		return "https://s3.instanode.dev/" + token
+	case "vector":
+		return "postgres://u:p@vector.instanode.dev:5432/" + token + "?sslmode=require"
 	default:
 		return "https://instanode.dev/" + token
 	}
@@ -456,6 +467,34 @@ func (m *mockAPI) handleCredentials(w http.ResponseWriter, token string) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "connection_url": res.ConnectionURL,
 	})
+}
+
+// handleDetail mirrors GET /api/v1/resources/:token from the real API.
+// Returns the full resource record so `instant resource <token>` can
+// render it (B15 scope-gap fix).
+func (m *mockAPI) handleDetail(w http.ResponseWriter, token string) {
+	m.mu.Lock()
+	res := m.resources[token]
+	m.mu.Unlock()
+	if res == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"ok": false, "error": "not_found",
+		})
+		return
+	}
+	out := map[string]any{
+		"ok":             true,
+		"id":             res.ID,
+		"token":          res.Token,
+		"resource_type":  res.ResourceType,
+		"name":           res.Name,
+		"env":            res.Env,
+		"tier":           res.Tier,
+		"status":         res.Status,
+		"connection_url": res.ConnectionURL,
+		"receive_url":    res.ReceiveURL,
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (m *mockAPI) handleDelete(w http.ResponseWriter, token string) {

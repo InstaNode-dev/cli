@@ -288,6 +288,7 @@ func (r manifestRsrc) validate() error {
 
 // haveAuth reports whether the HTTPClient will send an Authorization header.
 // True when INSTANT_TOKEN is set or `instant login` saved a token.
+// B15-P1: TrimSpace so whitespace-only values don't read as "authed".
 func haveAuth() bool {
 	t, ok := HTTPClient.Transport.(*authTransport)
 	if !ok {
@@ -296,7 +297,7 @@ func haveAuth() bool {
 	if t.apiKey != "" {
 		return true
 	}
-	return os.Getenv("INSTANT_TOKEN") != ""
+	return strings.TrimSpace(os.Getenv("INSTANT_TOKEN")) != ""
 }
 
 // errSessionExpiredSentinel is a private marker error returned by the

@@ -75,6 +75,28 @@ func (s *Store) Find(token string) *Entry {
 	return nil
 }
 
+// Remove drops the entry matching token and saves. Returns true when an
+// entry was actually removed; false when the token was unknown. Callers
+// MUST NOT depend on Remove for security — the source of truth is the API.
+// Used by `instant resource delete` to keep `instant status` honest.
+func (s *Store) Remove(token string) bool {
+	out := s.Entries[:0]
+	removed := false
+	for _, e := range s.Entries {
+		if e.Token == token {
+			removed = true
+			continue
+		}
+		out = append(out, e)
+	}
+	if !removed {
+		return false
+	}
+	s.Entries = out
+	_ = s.Save()
+	return true
+}
+
 func storePath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

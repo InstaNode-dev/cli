@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -67,6 +68,12 @@ var HTTPClient = &http.Client{Timeout: httpProvisionTimeout}
 var rootCmd = &cobra.Command{
 	Use:   "instant",
 	Short: "instanode.dev CLI — zero-friction developer infrastructure",
+	// B15-P0 (2) — Version is populated by SetBuildInfo() from main.go's
+	// ldflag-stamped vars. cobra surfaces this via `instant --version`
+	// and `instant -v`. The format mirrors api/worker/provisioner's
+	// /healthz output (version (commit, buildtime)) so CLAUDE.md rule 14
+	// (build-SHA gate) can be enforced against the CLI binary too.
+	Version: "dev (unknown, unknown)",
 	Long: `instanode.dev CLI
 
 Provision databases, caches, queues, and document stores with a single command.
@@ -79,18 +86,46 @@ Examples:
   instant cache new --name app-cache  Provision a Redis cache
   instant nosql new --name app-docs   Provision a MongoDB document store
   instant queue new --name app-jobs   Provision a NATS JetStream queue
+  instant storage new --name app-blob Provision an object-storage bucket prefix
+  instant webhook new --name app-hook Provision a webhook receiver URL
+  instant vector new --name app-vec   Provision a Postgres+pgvector resource
   instant resources                   List your provisioned resources (requires login)
+  instant resource <token>            Show detail for a single resource by token
+  instant resource delete <token>     Delete a resource (use --yes to skip confirm)
   instant status                      Show locally tracked resources
   instant login                       Log in to your instanode.dev account
   instant logout                      Remove locally saved credentials
   instant whoami                      Show current account
   instant upgrade                     Open the upgrade page
+  instant --version                   Print version, commit SHA, build time
 `,
 }
 
 // Execute runs the root command.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// SetBuildInfo wires the ldflag-stamped Version/Commit/BuildTime from main
+// into the cobra root so `instant --version` prints them. Called from
+// main.go::main(). Kept here (rather than init()) so the seam between the
+// main package and cmd/ stays explicit and so tests can override it.
+//
+// B15-P0 (2): CLAUDE.md rule 14 requires every deploy to verify the live
+// binary's commit matches `git rev-parse --short HEAD`. For the CLI, that
+// gate is `instant --version | grep <sha>` — which can only be satisfied
+// if the linker actually stamped these vars.
+func SetBuildInfo(version, commit, buildTime string) {
+	if version == "" {
+		version = "dev"
+	}
+	if commit == "" {
+		commit = "unknown"
+	}
+	if buildTime == "" {
+		buildTime = "unknown"
+	}
+	rootCmd.Version = fmt.Sprintf("%s (%s, %s)", version, commit, buildTime)
 }
 
 func init() {
@@ -119,7 +154,10 @@ func initConfig() {
 
 	// Wire up the auth transport — no-ops when unauthenticated.
 	// Priority: INSTANT_TOKEN env var > saved config (instant login).
-	apiKey := os.Getenv("INSTANT_TOKEN")
+	// B15-P1: TrimSpace so `INSTANT_TOKEN=$(cat .pat)` (with trailing
+	// newline) doesn't produce an "Authorization: Bearer tok\n" header
+	// that the server rejects.
+	apiKey := strings.TrimSpace(os.Getenv("INSTANT_TOKEN"))
 	if apiKey == "" && cfg != nil {
 		apiKey = cfg.APIKey
 	}
