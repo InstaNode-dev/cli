@@ -367,14 +367,16 @@ func resetUpFlags() {
 	}
 }
 
-// resetJSONFlags clears the --json flag globals for resources/status/whoami
-// between cases. Cobra retains the last-parsed value otherwise, which would
-// leak the JSON output mode from one test into a following human-readable
-// expectation.
+// resetJSONFlags clears the --json flag globals for resources/status/whoami/
+// resource between cases. Cobra retains the last-parsed value otherwise,
+// which would leak the JSON output mode from one test into a following
+// human-readable expectation.
 func resetJSONFlags() {
 	resourcesJSON = false
 	statusJSON = false
 	whoamiJSON = false
+	resourceDetailJSON = false
+	resourceDeleteYes = false
 	for _, c := range []struct {
 		cmd  string
 		flag string
@@ -382,10 +384,12 @@ func resetJSONFlags() {
 		{"resources", "json"},
 		{"status", "json"},
 		{"whoami", "json"},
+		{"resource", "json"},
+		{"resource", "yes"},
 	} {
 		if base := rootCmd.Commands(); base != nil {
 			for _, sub := range base {
-				if sub.Use == c.cmd || strings.HasPrefix(sub.Use, c.cmd+" ") {
+				if sub.Use == c.cmd || strings.HasPrefix(sub.Use, c.cmd+" ") || strings.HasPrefix(sub.Use, c.cmd+" |") {
 					if fl := sub.Flags().Lookup(c.flag); fl != nil {
 						_ = fl.Value.Set(fl.DefValue)
 						fl.Changed = false

@@ -2,13 +2,40 @@
 # The local gate (`make test`) is IDENTICAL to the CI gate so a CLI change
 # cannot pass locally and fail in CI (or vice versa).
 
-.PHONY: all build vet test test-race test-integration test-livesmoke ci clean
+.PHONY: all build vet test test-race test-integration test-livesmoke ci clean install version
+
+# ── B15-P0 (2) — build-info stamping ────────────────────────────────────────
+# Wired in at link time via Go's -X linker flag. CLAUDE.md rule 14 (build-SHA
+# gate) requires every deploy to verify the live binary's commit matches
+# `git rev-parse --short HEAD`. The `make build` target stamps real values;
+# unflagged `go build` falls back to the "dev" / "unknown" defaults declared
+# in main.go so `go test` and `go run` still work.
+VERSION    := $(shell cat VERSION 2>/dev/null || echo dev)
+COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS    := -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)
 
 # `make` with no target = the full local gate.
 all: ci
 
+# build — produces the `instant` binary with version stamping. Drop into
+# bin/instant so `make install` can pick it up; `go build ./...` builds every
+# package which is what CI's gate wants.
 build:
-	go build ./...
+	go build -ldflags "$(LDFLAGS)" ./...
+
+# install — drop the stamped binary under bin/ for local verification of
+# `instant --version`. Use `go install` semantics: produce one binary named
+# `instant`.
+install:
+	mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/instant .
+
+# version — for the deploy ritual (CLAUDE.md rule 23 step 4). After building,
+# `make version` prints what the binary will report so an operator can grep
+# the expected SHA before shipping.
+version: install
+	./bin/instant --version
 
 vet:
 	go vet ./...

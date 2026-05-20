@@ -49,11 +49,47 @@ func validateResourceName(name string) error {
 	return nil
 }
 
+// B15-P0 (3) — every resource-group command (db / cache / nosql / queue /
+// storage / webhook / vector) MUST reject unknown sub-sub-commands with a
+// non-zero exit. The previous behaviour was:
+//
+//   instant db delete <id>   → prints help, exits 0
+//
+// which silently hid typo bugs in agent scripts and let `... | xargs instant`
+// pipelines look successful. The pattern below combines:
+//
+//   1. Args: cobra.NoArgs            — refuses any positional arg
+//   2. RunE: showGroupHelp           — when called with zero args, shows
+//                                      help and exits 0 (the legacy path)
+//   3. cobra's built-in "did you mean?" suggestions surface for typos that
+//      are within 2 edits of a valid subcommand (cobra default).
+//
+// Together, `instant db delete <id>` now errors with:
+//   Error: unknown command "delete" for "instant db"
+//   Run 'instant db --help' for usage.
+// and exits 1.
+func showGroupHelp(cmd *cobra.Command, args []string) error {
+	return cmd.Help()
+}
+
+func newGroupCmd(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		// Args: NoArgs — any positional arg that isn't a registered
+		// sub-sub-command name surfaces cobra's "unknown command" error.
+		Args: cobra.NoArgs,
+		// RunE fires only when zero args reach the parent — i.e.
+		// `instant db` with no subcommand. Print help, exit 0.
+		RunE: showGroupHelp,
+	}
+}
+
 var (
-	dbCmd    = &cobra.Command{Use: "db", Short: "Manage Postgres database resources"}
-	cacheCmd = &cobra.Command{Use: "cache", Short: "Manage Redis cache resources"}
-	nosqlCmd = &cobra.Command{Use: "nosql", Short: "Manage MongoDB document-store resources"}
-	queueCmd = &cobra.Command{Use: "queue", Short: "Manage NATS JetStream queue resources"}
+	dbCmd    = newGroupCmd("db", "Manage Postgres database resources")
+	cacheCmd = newGroupCmd("cache", "Manage Redis cache resources")
+	nosqlCmd = newGroupCmd("nosql", "Manage MongoDB document-store resources")
+	queueCmd = newGroupCmd("queue", "Manage NATS JetStream queue resources")
 )
 
 var dbNewCmd = &cobra.Command{
@@ -197,7 +233,7 @@ With --json, output is a machine-readable JSON array of token entries
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := tokens.Load()
 		if err != nil {
-			return fmt.Errorf("loading token store: %w", err)
+			return wrapJSONErr(cmd, fmt.Errorf("loading token store: %w", err))
 		}
 
 		// T16 P3 — machine-readable output. Empty list emits `[]`.
