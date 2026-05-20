@@ -44,6 +44,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/instant-dev/cli/internal/tokens"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -201,6 +202,23 @@ func runUp(_ *cobra.Command, _ []string) error {
 			listErr))
 	}
 
+	// B15-P1 (7) — anonymous-`up` idempotency. Anonymous callers can't
+	// authenticate to GET /api/v1/resources so `existing` is nil. Without a
+	// fallback, the 2nd `instant up --emit-env` call re-POSTs every resource
+	// — which 429s after 5 calls and breaks `eval $(instant up --emit-env)`.
+	// We load ~/.instant-tokens (populated on each provision in monitor.go's
+	// makeProvisionCmd + below in runUp's "PROVISION" branch) and use it as
+	// a (type, name, env) lookup. This makes anon-up genuinely idempotent
+	// on the same machine. A different machine still pays the re-provision
+	// cost — but the README claim of "`up` is idempotent" now holds on the
+	// machine that ran `up` once. Authenticated callers still prefer the
+	// authoritative API list (anonCache only fills the gap when existing
+	// is nil/empty AND we're anonymous).
+	var anonCache *tokens.Store
+	if !haveAuth() && len(existing) == 0 {
+		anonCache, _ = tokens.Load() // best-effort; nil cache is fine
+	}
+
 	var hadErr bool
 	for _, decl := range manifest.Resources {
 		if err := decl.validate(); err != nil {
@@ -208,7 +226,38 @@ func runUp(_ *cobra.Command, _ []string) error {
 			hadErr = true
 			continue
 		}
+		// First check the live server list; if anonymous and unauthed, also
+		// peek at the local cache. The server list is authoritative — only
+		// fall back to anonCache when the API view is empty.
 		match := findExisting(existing, decl, env)
+		if match == nil && anonCache != nil {
+			if cached := anonCache.FindByTypeNameEnv(apiResourceType(decl.Type), decl.Name, env); cached != nil {
+				// Synthesize a resourceListItem so the reuse branch below
+				// works unchanged. The cached URL is sufficient for emit;
+				// no /credentials round trip needed (which would 401 for
+				// anon anyway).
+				match = &resourceListItem{
+					Token:        cached.Token,
+					ResourceType: apiResourceType(decl.Type),
+					Name:         cached.Name,
+					Env:          cached.Env,
+					Tier:         "anonymous",
+				}
+				// Short-circuit: emit straight from the cache and skip the
+				// /credentials call (the loop below would attempt and fail).
+				url := cached.URL
+				if url == "" && strings.EqualFold(decl.Type, "webhook") {
+					url = webhookReceiveURL(cached.Token)
+				}
+				if url == "" {
+					// Cache row without a URL — fall through to the normal
+					// reuse path so the credentials endpoint can try.
+				} else {
+					emit(decl, url, "REUSE", cached.Token)
+					continue
+				}
+			}
+		}
 		if match != nil {
 			// T16 P2-4 — webhook REUSE must still emit a stable
 			// `export NAME=...` line (otherwise the second `up --emit-env`
@@ -246,6 +295,26 @@ func runUp(_ *cobra.Command, _ []string) error {
 		urlStr := creds.ConnectionURL
 		if urlStr == "" {
 			urlStr = creds.ReceiveURL
+		}
+		// B15-P1 (7) — persist the freshly-provisioned token into the local
+		// store, keyed by (type, name, env), so the NEXT `instant up` run
+		// can recognize it without an API round trip (critical for the
+		// anonymous quick-start path that can't call GET /api/v1/resources).
+		// Errors are non-fatal: the resource is real on the server and a
+		// failed local-write only costs us idempotency, not correctness.
+		if store, loadErr := tokens.Load(); loadErr == nil {
+			cacheEnv := creds.Env
+			if cacheEnv == "" {
+				cacheEnv = env
+			}
+			_ = store.Add(tokens.Entry{
+				Token:  creds.Token,
+				Name:   decl.Name,
+				Type:   apiResourceType(decl.Type),
+				Env:    cacheEnv,
+				URL:    urlStr,
+				Source: "up",
+			})
 		}
 		emit(decl, urlStr, "PROVISION", creds.Token)
 	}
@@ -287,14 +356,18 @@ func (r manifestRsrc) validate() error {
 }
 
 // haveAuth reports whether the HTTPClient will send an Authorization header.
-// True when INSTANT_TOKEN is set or `instant login` saved a token.
+// True when --token, INSTANT_TOKEN, or `instant login` configured a token.
 // B15-P1: TrimSpace so whitespace-only values don't read as "authed".
+// B15-P2: --token global flag is also honored (mirrors initConfig precedence).
 func haveAuth() bool {
 	t, ok := HTTPClient.Transport.(*authTransport)
 	if !ok {
 		return false
 	}
 	if t.apiKey != "" {
+		return true
+	}
+	if strings.TrimSpace(adHocToken) != "" {
 		return true
 	}
 	return strings.TrimSpace(os.Getenv("INSTANT_TOKEN")) != ""
@@ -498,4 +571,20 @@ func shortToken(t string) string {
 func webhookReceiveURL(token string) string {
 	base := strings.TrimRight(APIBaseURL, "/")
 	return base + "/webhook/receive/" + token
+}
+
+// apiResourceType maps a manifest type string (postgres|redis|mongodb|queue|
+// storage|webhook) to the api's resource_type field. The mapping is identity
+// for all current types — the api stores resource_type using the same
+// strings — but we route through this helper so a future divergence
+// (e.g. manifest `mongo` → api `mongodb`) is a single-site fix rather than
+// scattered string-literal edits. B15-P1 (7) uses this to key the local
+// tokens cache and to synthesize resourceListItem entries when the live
+// server list is unavailable to anonymous callers.
+func apiResourceType(manifestType string) string {
+	switch strings.ToLower(strings.TrimSpace(manifestType)) {
+	case "postgres", "redis", "mongodb", "queue", "storage", "webhook", "vector":
+		return strings.ToLower(strings.TrimSpace(manifestType))
+	}
+	return strings.ToLower(strings.TrimSpace(manifestType))
 }

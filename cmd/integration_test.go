@@ -371,17 +371,26 @@ func resetUpFlags() {
 // resource between cases. Cobra retains the last-parsed value otherwise,
 // which would leak the JSON output mode from one test into a following
 // human-readable expectation.
+//
+// B15-P2: also resets --filter / --limit on resources and the persistent
+// --token on the root so a previous test's auth-override doesn't bleed
+// into the next case.
 func resetJSONFlags() {
 	resourcesJSON = false
 	statusJSON = false
 	whoamiJSON = false
 	resourceDetailJSON = false
 	resourceDeleteYes = false
+	resourcesFilter = nil
+	resourcesLimit = 0
+	adHocToken = ""
 	for _, c := range []struct {
 		cmd  string
 		flag string
 	}{
 		{"resources", "json"},
+		{"resources", "filter"},
+		{"resources", "limit"},
 		{"status", "json"},
 		{"whoami", "json"},
 		{"resource", "json"},
@@ -391,12 +400,29 @@ func resetJSONFlags() {
 			for _, sub := range base {
 				if sub.Use == c.cmd || strings.HasPrefix(sub.Use, c.cmd+" ") || strings.HasPrefix(sub.Use, c.cmd+" |") {
 					if fl := sub.Flags().Lookup(c.flag); fl != nil {
-						_ = fl.Value.Set(fl.DefValue)
+						// StringArray flags carry DefValue="[]" which the
+						// pflag setter parses as a single-element slice
+						// `["[]"]` — not empty! Reset directly via the
+						// underlying SliceValue (pflag.SliceValue.Replace
+						// with nil) when available, falling back to the
+						// generic Set for scalars. We also clear .Changed
+						// so cobra doesn't think the user-provided default
+						// was explicitly set in this run.
+						if sv, ok := fl.Value.(interface{ Replace([]string) error }); ok {
+							_ = sv.Replace(nil)
+						} else {
+							_ = fl.Value.Set(fl.DefValue)
+						}
 						fl.Changed = false
 					}
 				}
 			}
 		}
+	}
+	// Also reset the persistent --token at the root.
+	if fl := rootCmd.PersistentFlags().Lookup("token"); fl != nil {
+		_ = fl.Value.Set(fl.DefValue)
+		fl.Changed = false
 	}
 }
 
