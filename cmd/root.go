@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/instant-dev/cli/internal/cliconfig"
 	"github.com/instant-dev/cli/internal/secretstore"
 )
+
+var _ = httpListTimeout // documented constant; referenced in tests / future refactor
 
 // APIBaseURL is the instanode.dev API base URL.
 // Resolved at init from (in priority order):
@@ -33,9 +36,33 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
+// httpListTimeout is the default per-request timeout for read-only API calls
+// (list, get, auth/me). Short — these never call into provisioning latency
+// and a stuck server should fail-fast.
+const httpListTimeout = 10 * time.Second
+
+// httpProvisionTimeout is the per-request timeout for synchronous provisioning
+// and reconcile calls. T16 P2-2: a 10s client timeout used to abort real
+// `db new` / `cache new` / `nosql new` requests under load and leave an
+// orphan resource on the server (provisioning is synchronous on the API:
+// CREATE DATABASE / CREATE USER / pool warm-up against shared infra can
+// legitimately exceed 10s). 60s matches the api's documented provisioning
+// budget and gives the agent a chance to receive the token before the
+// timer fires.
+//
+// Operators can override via INSTANT_TIMEOUT_SECONDS (uses int seconds for
+// CLI simplicity; <=0 falls back to the default).
+const httpProvisionTimeout = 60 * time.Second
+
 // HTTPClient is the shared HTTP client used by all subcommands.
 // It is configured with the auth transport during init.
-var HTTPClient = &http.Client{Timeout: 10 * time.Second}
+//
+// IMPORTANT: HTTPClient's Timeout is set to httpProvisionTimeout because
+// provisioning + reconcile use this client. The few read-only `resources`
+// and auth-poll paths are still safe because their requests complete in
+// milliseconds; the longer ceiling is harmless. We keep one client (rather
+// than two) to preserve the auth transport wiring through cobra OnInitialize.
+var HTTPClient = &http.Client{Timeout: httpProvisionTimeout}
 
 var rootCmd = &cobra.Command{
 	Use:   "instant",
@@ -96,8 +123,19 @@ func initConfig() {
 	if apiKey == "" && cfg != nil {
 		apiKey = cfg.APIKey
 	}
+	// T16 P2-2 — provisioning is synchronous and can legitimately exceed 10s
+	// against the live api under load. Use httpProvisionTimeout (60s) by default
+	// so a slow-but-successful provision returns the token rather than
+	// orphaning the resource on the server. Operators can override via
+	// INSTANT_TIMEOUT_SECONDS (e.g. set to 120 on very slow links).
+	timeout := httpProvisionTimeout
+	if env := os.Getenv("INSTANT_TIMEOUT_SECONDS"); env != "" {
+		if n, parseErr := strconv.Atoi(env); parseErr == nil && n > 0 {
+			timeout = time.Duration(n) * time.Second
+		}
+	}
 	HTTPClient = &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 		Transport: &authTransport{
 			base:   http.DefaultTransport,
 			apiKey: apiKey,

@@ -48,7 +48,7 @@ func p1_4_fixture(t *testing.T, listStatus int, expectedExitCode int) {
 	c.mock.mu.Unlock()
 
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: dont-double-up
@@ -114,7 +114,7 @@ func TestBugHunt_T16_P1_4_UpAbortsOnListFetch_401_AuthenticatedSession(t *testin
 	c.mock.mu.Unlock()
 
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: dont-double-up-401
@@ -164,7 +164,7 @@ func TestBugHunt_T16_P1_3_ExitCodes_UpResourceFailed(t *testing.T) {
 	c.mock.mu.Unlock()
 
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: doomed
@@ -216,7 +216,7 @@ func TestBugHunt_T16_P1_5_EmitEnvShellQuotesHostileValues(t *testing.T) {
 	c.mock.mu.Unlock()
 
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: hostile-url
@@ -260,7 +260,7 @@ resources:
 func TestBugHunt_T16_P1_5_EmitEnvSanitizesExportName(t *testing.T) {
 	c := newITContext(t)
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: My App DB
@@ -420,7 +420,7 @@ func TestBugHunt_T16_P1_2_UniformExitCodeFor401(t *testing.T) {
 
 	// (c) `up`
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: stale-up
