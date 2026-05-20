@@ -97,6 +97,8 @@ func newITContext(t *testing.T) *itContext {
 	// Reset the in-memory secret store so a token saved by a previous test
 	// doesn't leak into "I'm anonymous" assertions.
 	secretstore.UseMemoryBackend()
+	// Clear cobra's retained --json flag values from any prior test.
+	resetJSONFlags()
 
 	t.Cleanup(func() {
 		APIBaseURL, HTTPClient = prevURL, prevClient
@@ -365,10 +367,43 @@ func resetUpFlags() {
 	}
 }
 
+// resetJSONFlags clears the --json flag globals for resources/status/whoami
+// between cases. Cobra retains the last-parsed value otherwise, which would
+// leak the JSON output mode from one test into a following human-readable
+// expectation.
+func resetJSONFlags() {
+	resourcesJSON = false
+	statusJSON = false
+	whoamiJSON = false
+	for _, c := range []struct {
+		cmd  string
+		flag string
+	}{
+		{"resources", "json"},
+		{"status", "json"},
+		{"whoami", "json"},
+	} {
+		if base := rootCmd.Commands(); base != nil {
+			for _, sub := range base {
+				if sub.Use == c.cmd || strings.HasPrefix(sub.Use, c.cmd+" ") {
+					if fl := sub.Flags().Lookup(c.flag); fl != nil {
+						_ = fl.Value.Set(fl.DefValue)
+						fl.Changed = false
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestIntegration_UpProvisionsAndReconciles(t *testing.T) {
 	c := newITContext(t)
+	// T16 P2-3 — env=development is now the platform default for anonymous
+	// runs (CLAUDE.md rule 11). Any other env requires auth; tests that do
+	// not establish a session must use the default env to exercise the
+	// happy path.
 	manifest := writeManifest(t, `
-env: production
+env: development
 resources:
   - type: postgres
     name: up-db

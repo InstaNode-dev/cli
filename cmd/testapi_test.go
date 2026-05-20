@@ -67,6 +67,74 @@ type mockAPI struct {
 	// authComplete drives the /auth/cli/:id poll: false => 202 pending,
 	// true => 200 with an authResult.
 	authComplete bool
+
+	// ── T16 P2-1 — structured error envelope drivers ────────────────────
+	// When injectedErrorStatus is non-zero, the next provision returns the
+	// canonical W7G error envelope (status + error code + message +
+	// agent_action + upgrade_url + retry_after_seconds) instead of the
+	// success path. injectedRawBody, when non-empty, takes precedence and
+	// is returned as the raw response body verbatim (for non-JSON 5xx
+	// regression coverage).
+	injectedErrorStatus  int
+	injectedErrorCode    string
+	injectedErrorMessage string
+	injectedAgentAction  string
+	injectedUpgradeURL   string
+	injectedRetryAfter   int
+	injectedRawBody      string
+
+	// ── T16 P2-5 — id-vs-token regression mode ──────────────────────────
+	// When true, every provisioned resource gets an id that DIFFERS from
+	// its token, and the list endpoint returns both fields with the
+	// distinct values. The credentials endpoint still keys by token, so a
+	// CLI that mistakenly sends id would 404. This pins the contract that
+	// /api/v1/resources/:id/credentials expects the token (a UUID).
+	idDifferentFromToken bool
+}
+
+// injectErrorOnProvision arms the mock to return a structured error envelope
+// on the NEXT provisioning request, then disarms itself. Used by T16 P2-1
+// regression tests to drive the parseAPIError path.
+func (m *mockAPI) injectErrorOnProvision(status int, code, message, agentAction, upgradeURL string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.injectedErrorStatus = status
+	m.injectedErrorCode = code
+	m.injectedErrorMessage = message
+	m.injectedAgentAction = agentAction
+	m.injectedUpgradeURL = upgradeURL
+	m.injectedRetryAfter = 0
+	m.injectedRawBody = ""
+}
+
+// injectErrorOnProvisionWithRetry is the 429 variant: includes
+// retry_after_seconds in the envelope so parseAPIError surfaces the wait
+// hint to the user.
+func (m *mockAPI) injectErrorOnProvisionWithRetry(status int, code, message, agentAction string, retrySeconds int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.injectedErrorStatus = status
+	m.injectedErrorCode = code
+	m.injectedErrorMessage = message
+	m.injectedAgentAction = agentAction
+	m.injectedUpgradeURL = ""
+	m.injectedRetryAfter = retrySeconds
+	m.injectedRawBody = ""
+}
+
+// injectRawErrorOnProvision returns a raw (non-JSON) body on the next
+// provision response — used to verify parseAPIError truncates safely
+// when the body isn't the envelope shape.
+func (m *mockAPI) injectRawErrorOnProvision(status int, rawBody string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.injectedErrorStatus = status
+	m.injectedRawBody = rawBody
+	m.injectedErrorCode = ""
+	m.injectedErrorMessage = ""
+	m.injectedAgentAction = ""
+	m.injectedUpgradeURL = ""
+	m.injectedRetryAfter = 0
 }
 
 // newMockAPI starts an httptest.Server backed by a fresh mockAPI and returns
@@ -178,6 +246,51 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *mockAPI) handleProvision(w http.ResponseWriter, r *http.Request, rtype string) {
 	m.mu.Lock()
+
+	// T16 P2-1 — structured envelope injection. Highest priority because
+	// the regression tests use this to verify parseAPIError's behaviour.
+	// The arm-once contract means the next provision consumes the injection
+	// and subsequent requests proceed normally.
+	if m.injectedErrorStatus != 0 {
+		status := m.injectedErrorStatus
+		// Raw-body mode wins — used to verify the parser falls back safely
+		// when the body isn't the JSON envelope shape.
+		if m.injectedRawBody != "" {
+			body := m.injectedRawBody
+			m.injectedErrorStatus = 0
+			m.injectedRawBody = ""
+			m.mu.Unlock()
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		env := map[string]any{
+			"ok":         false,
+			"error":      m.injectedErrorCode,
+			"error_code": m.injectedErrorCode,
+			"message":    m.injectedErrorMessage,
+		}
+		if m.injectedAgentAction != "" {
+			env["agent_action"] = m.injectedAgentAction
+		}
+		if m.injectedUpgradeURL != "" {
+			env["upgrade_url"] = m.injectedUpgradeURL
+		}
+		if m.injectedRetryAfter > 0 {
+			env["retry_after_seconds"] = m.injectedRetryAfter
+		}
+		m.injectedErrorStatus = 0
+		m.injectedErrorCode = ""
+		m.injectedErrorMessage = ""
+		m.injectedAgentAction = ""
+		m.injectedUpgradeURL = ""
+		m.injectedRetryAfter = 0
+		m.mu.Unlock()
+		writeJSON(w, status, env)
+		return
+	}
+
 	if m.failProvisionStatus != 0 {
 		status := m.failProvisionStatus
 		m.failProvisionStatus = 0
@@ -226,6 +339,15 @@ func (m *mockAPI) handleProvision(w http.ResponseWriter, r *http.Request, rtype 
 
 	token := "tok_" + randHex(10)
 	id := "res_" + randHex(8)
+	// T16 P2-5 — in id-differs-from-token mode the mock guarantees ID and
+	// Token are wholly distinct strings. The list endpoint returns both,
+	// and /credentials still keys by token (mirroring the live API). A CLI
+	// that mistakenly sends id would 404 on /credentials.
+	m.mu.Lock()
+	if m.idDifferentFromToken {
+		id = "res_DIFFERENT_" + randHex(8)
+	}
+	m.mu.Unlock()
 	res := &mockResource{
 		ID: id, Token: token, ResourceType: rtype, Name: body.Name,
 		Env: env, Tier: "anonymous", Status: "active",

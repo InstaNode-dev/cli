@@ -8,7 +8,9 @@ package cmd
 //
 // Manifest shape (instant.yaml):
 //
-//   env: production            # optional, defaults to "production"
+//   env: development           # optional, defaults to "development"
+//                              # (matches the platform contract — CLAUDE.md
+//                              # rule 11 / migration 026)
 //   resources:
 //     - type: postgres         # postgres | redis | mongodb | queue | storage | webhook
 //       name: app-db           # human label, used as match key
@@ -22,6 +24,15 @@ package cmd
 //     1. INSTANT_TOKEN env var
 //     2. ~/.instant-config (set by `instant login`)
 //   Anonymous mode (no token) provisions anonymous-tier resources only.
+//
+// Env default (T16 P2-3):
+//   When neither the manifest nor --env specifies an env, `up` lands resources
+//   in `development` — the lowest-stakes bucket. This matches the api's
+//   `env=development` default (CLAUDE.md rule 11) so the CLI never silently
+//   targets production when the manifest omits `env`. Set `env: production`
+//   explicitly in instant.yaml — or pass `--env=production` — to ship live.
+//   The platform always requires auth for any env other than the anonymous
+//   default, so a missing token + non-default env fails fast locally.
 
 import (
 	"bytes"
@@ -86,15 +97,24 @@ For each resource:
     it is reused (no new provisioning, no extra cost)
   - otherwise a new resource is provisioned
 
+Env resolution (in priority order):
+  1. --env flag
+  2. manifest top-level "env:" field
+  3. INSTANT_ENV environment variable
+  4. default: "development" — matches the platform's lowest-stakes default
+     (CLAUDE.md rule 11 / migration 026). Pass --env=production explicitly
+     to ship live.
+
 Exit codes:
   0  every resource reconciled successfully
   1  manifest parse / file errors
   2  one or more resources failed to provision
-  3  authentication required for the requested env (e.g. non-production),
+  3  authentication required for the requested env (any non-default env),
      OR the saved session has expired and needs re-login
 
 Examples:
-  instant up
+  instant up                          # development env (default)
+  instant up --env=production         # ship live (requires auth)
   instant up --env=staging
   instant up --file=path/to/instant.yaml
   instant up --emit-env > .env.local
@@ -118,23 +138,36 @@ func init() {
 	rootCmd.AddCommand(upCmd)
 }
 
+// upDefaultEnv is the env `up` falls back to when the manifest, --env flag,
+// and INSTANT_ENV are all empty. T16 P2-3: matches the platform default
+// (CLAUDE.md rule 11 — migration 026) so an omitted `env:` cannot silently
+// target production. Override explicitly via --env=production to ship live.
+const upDefaultEnv = "development"
+
 // runUp is the entrypoint for `instant up`.
 func runUp(_ *cobra.Command, _ []string) error {
 	manifest, err := readManifest(upFile)
 	if err != nil {
 		return err
 	}
+	// T16 P2-3 — env resolution: --env > manifest.env > $INSTANT_ENV > default.
+	// Default is "development" (not "production"); see upDefaultEnv.
 	env := strings.TrimSpace(manifest.Env)
 	if upEnv != "" {
 		env = upEnv
 	}
 	if env == "" {
-		env = "production"
+		env = strings.TrimSpace(os.Getenv("INSTANT_ENV"))
+	}
+	if env == "" {
+		env = upDefaultEnv
 	}
 
-	// Non-production env requires auth (server enforces this; we surface a
+	// Any non-default env requires auth (server enforces this; we surface a
 	// friendly hint locally so the founder doesn't waste a round trip).
-	if env != "production" && !haveAuth() {
+	// `development` is the safe local-iteration default and is the ONLY env
+	// that can be reconciled anonymously.
+	if env != upDefaultEnv && !haveAuth() {
 		return errAuthRequired(fmt.Sprintf(
 			"env %q requires an INSTANT_TOKEN — run `instant login` or set INSTANT_TOKEN to a Personal Access Token",
 			env))
@@ -177,9 +210,22 @@ func runUp(_ *cobra.Command, _ []string) error {
 		}
 		match := findExisting(existing, decl, env)
 		if match != nil {
+			// T16 P2-4 — webhook REUSE must still emit a stable
+			// `export NAME=...` line (otherwise the second `up --emit-env`
+			// run silently drops the webhook variable and breaks .env).
+			// The receive URL is deterministic — base + token — so we can
+			// reconstruct it without a round trip rather than depending on
+			// the credentials endpoint that returns 404 for older API
+			// builds / non-paid tiers.
+			if strings.EqualFold(match.ResourceType, "webhook") {
+				url := webhookReceiveURL(match.Token)
+				emit(decl, url, "REUSE", match.Token)
+				continue
+			}
 			url, err := fetchCredentials(match.Token)
 			if err != nil {
-				// Webhooks have no connection URL — fall back to a polite note.
+				// Non-webhook resource with hidden credentials — surface a
+				// clear note but do NOT silently emit a broken/empty line.
 				fmt.Fprintf(os.Stderr, "  REUSE     %-9s %s (%s) — credentials hidden: %v\n",
 					decl.Type, decl.Name, shortToken(match.Token), err)
 				continue
@@ -283,7 +329,8 @@ func fetchExistingResources(env string) ([]resourceListItem, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		// T16 P2-1 — surface structured agent_action / upgrade hints.
+		return nil, parseAPIError(resp.StatusCode, raw)
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	var out resourceListResponse
@@ -306,8 +353,10 @@ func findExisting(items []resourceListItem, decl manifestRsrc, env string) *reso
 		if strings.ToLower(strings.TrimSpace(it.Name)) != wantName {
 			continue
 		}
-		// env match: server stores empty for legacy / production
-		if it.Env == "" && env == "production" {
+		// env match: server stores empty for legacy / production, and
+		// post-migration-026 stores "development" for env-less provisions.
+		// Both must match when the caller asks for the new platform default.
+		if it.Env == "" && (env == "production" || env == upDefaultEnv) {
 			return it
 		}
 		if it.Env == env {
@@ -343,7 +392,10 @@ func provisionForUp(decl manifestRsrc, env string) (*provisionResponse, error) {
 		return nil, errSessionExpiredSentinel
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("server %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		// T16 P2-1 — surface agent_action / upgrade hints on provision-time
+		// errors (402 quota, 429 rate-limit, 5xx, etc.) instead of dumping
+		// the raw JSON body at the user.
+		return nil, parseAPIError(resp.StatusCode, raw)
 	}
 	var out provisionResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -398,10 +450,17 @@ func truncate(s string, n int) string {
 }
 
 // fetchCredentials retrieves the plaintext connection URL for an existing
-// resource via GET /api/v1/resources/:id/credentials. Used on REUSE so the
-// CLI can re-emit the same .env contents on every run.
-func fetchCredentials(id string) (string, error) {
-	url := APIBaseURL + "/api/v1/resources/" + id + "/credentials"
+// resource via GET /api/v1/resources/:id/credentials.
+//
+// T16 P2-5: the URL path parameter `:id` is the resource's **TOKEN (UUID)** —
+// NOT the database row id. This is the api's documented contract
+// (api/internal/handlers/resource.go GetCredentials uses
+// `uuid.Parse(c.Params("id"))` and looks up by token, not by row id). The
+// list endpoint returns BOTH `id` and `token`, so callers MUST pass `token`
+// here, never `id`. Misusing `id` would 400 ("invalid_id" — not a UUID) or
+// 404. Callers in this file go through `match.Token` from resourceListItem.
+func fetchCredentials(token string) (string, error) {
+	url := APIBaseURL + "/api/v1/resources/" + token + "/credentials"
 	resp, err := HTTPClient.Get(url)
 	if err != nil {
 		return "", err
@@ -427,4 +486,15 @@ func shortToken(t string) string {
 		return t[:8]
 	}
 	return t
+}
+
+// webhookReceiveURL reconstructs the canonical webhook receive URL from the
+// stored token. The shape `<API_BASE>/webhook/receive/<token>` is fixed by
+// the api (api/internal/handlers/webhook.go: `receiveURL(baseURL, token)`)
+// and never changes per-token, so the CLI can derive it locally without a
+// credentials round trip. T16 P2-4 uses this on REUSE so `up --emit-env`
+// produces a stable export line for webhook resources on every run.
+func webhookReceiveURL(token string) string {
+	base := strings.TrimRight(APIBaseURL, "/")
+	return base + "/webhook/receive/" + token
 }

@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// resourcesJSON is the --json flag for `instant resources`. T16 P3:
+// machine-readable output for agents that script the CLI; replaces the
+// tabwriter human-readable table when set.
+var resourcesJSON bool
+
 // resourcesCmd lists resources from the agent API (requires login).
 var resourcesCmd = &cobra.Command{
 	Use:   "resources",
@@ -20,6 +25,10 @@ var resourcesCmd = &cobra.Command{
 Requires login. Run 'instant login' first if you haven't already.
 
 Use 'instant status' to see resources tracked locally (no login required).
+
+With --json, output is a machine-readable JSON array of resource objects
+({token, resource_type, name, tier, status}) — suitable for piping into
+jq or consuming directly from an agent script.
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := fmt.Sprintf("%s/api/v1/resources", APIBaseURL)
@@ -50,7 +59,10 @@ Use 'instant status' to see resources tracked locally (no login required).
 
 		raw, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, truncate(string(raw), 200))
+			// T16 P2-1 — parse the structured error envelope so 402 / 429 /
+			// 5xx render the message + agent_action + upgrade_url rather
+			// than a raw JSON dump.
+			return parseAPIError(resp.StatusCode, raw)
 		}
 
 		var result struct {
@@ -66,6 +78,15 @@ Use 'instant status' to see resources tracked locally (no login required).
 		}
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
+		}
+
+		// T16 P3 — machine-readable output. Stable schema, exit 0 with `[]`
+		// when empty (an agent does not have to special-case the "no
+		// resources" sentence).
+		if resourcesJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result.Items)
 		}
 
 		if len(result.Items) == 0 {
@@ -93,5 +114,7 @@ Use 'instant status' to see resources tracked locally (no login required).
 }
 
 func init() {
+	resourcesCmd.Flags().BoolVar(&resourcesJSON, "json", false,
+		"Emit a JSON array of resources instead of a human-readable table")
 	rootCmd.AddCommand(resourcesCmd)
 }

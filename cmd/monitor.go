@@ -158,7 +158,10 @@ func provisionResource(endpoint, name string) (*provisionResponse, error) {
 		return nil, errSessionExpired()
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		// T16 P2-1 — surface the structured error envelope
+		// ({message, agent_action, upgrade_url, ...}) rather than
+		// dumping the raw JSON blob at the user.
+		return nil, parseAPIError(resp.StatusCode, raw)
 	}
 
 	var result provisionResponse
@@ -173,6 +176,10 @@ func provisionResource(endpoint, name string) (*provisionResponse, error) {
 
 // ── status command ────────────────────────────────────────────────────────────
 
+// statusJSON is the --json flag for `instant status`. T16 P3: machine-readable
+// output for agents.
+var statusJSON bool
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show locally tracked resources",
@@ -183,11 +190,21 @@ Resources are saved automatically when you run:
   instant cache new --name <name>
   instant nosql new --name <name>
   instant queue new --name <name>
+
+With --json, output is a machine-readable JSON array of token entries
+({token, name, url, source, created_at}).
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := tokens.Load()
 		if err != nil {
 			return fmt.Errorf("loading token store: %w", err)
+		}
+
+		// T16 P3 — machine-readable output. Empty list emits `[]`.
+		if statusJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(store.Entries)
 		}
 
 		if len(store.Entries) == 0 {
@@ -227,5 +244,8 @@ func init() {
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(nosqlCmd)
 	rootCmd.AddCommand(queueCmd)
+
+	statusCmd.Flags().BoolVar(&statusJSON, "json", false,
+		"Emit a JSON array of local token entries instead of a human-readable table")
 	rootCmd.AddCommand(statusCmd)
 }
