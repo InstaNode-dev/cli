@@ -1,2 +1,5 @@
 bin/
 *.exe
+
+# Internal Claude Code skills
+.claude/
