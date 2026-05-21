@@ -1,6 +1,8 @@
 module github.com/InstaNode-dev/cli
 
-go 1.23
+go 1.25
+
+toolchain go1.25.10
 
 require (
 	github.com/spf13/cobra v1.10.2
