@@ -110,7 +110,19 @@ Examples:
 }
 
 // Execute runs the root command.
+//
+// This is intentionally a 1-line wrapper around ExecuteWithArgs so the
+// production callsite (main.go) and tests share the same entry point.
+// Tests use ExecuteWithArgs directly to assert behaviour without polluting
+// os.Args.
 func Execute() error {
+	return ExecuteWithArgs(os.Args[1:])
+}
+
+// ExecuteWithArgs runs the root command with an explicit args slice. The
+// production callsite passes os.Args[1:]; tests pass a fixed slice.
+func ExecuteWithArgs(args []string) error {
+	rootCmd.SetArgs(args)
 	return rootCmd.Execute()
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/InstaNode-dev/cli/cmd"
@@ -25,17 +26,25 @@ var (
 )
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stderr))
+}
+
+// run is the testable inner entrypoint. It is identical to main() except
+// it does not call os.Exit and accepts the args slice and stderr writer
+// as explicit parameters. Returns the documented exit code (0 = success;
+// see cmd.ExitCodeFor for the contract).
+func run(args []string, stderr io.Writer) int {
 	// Propagate the ldflag-stamped values into the cobra root so
 	// `instant --version` prints them. cmd.SetBuildInfo stays a tiny
 	// seam — the cmd/ package has no dependency on main.
 	cmd.SetBuildInfo(Version, Commit, BuildTime)
 
-	err := cmd.Execute()
+	err := cmd.ExecuteWithArgs(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(stderr, err)
 	}
 	// Translate any error returned by the cobra tree into the documented
 	// exit-code contract. A nil error exits 0; an *ExitCodeError carries its
 	// own code; anything else defaults to 1 (generic failure).
-	os.Exit(cmd.ExitCodeFor(err))
+	return cmd.ExitCodeFor(err)
 }
