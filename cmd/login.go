@@ -17,10 +17,20 @@ import (
 )
 
 // pollInterval is how often the CLI checks for auth completion.
-const pollInterval = 2 * time.Second
+//
+// Declared as var (not const) so tests can lower it to milliseconds without
+// changing production behaviour. Production callers never reassign it.
+var pollInterval = 2 * time.Second
 
 // pollTimeout is the maximum wait time for the user to complete login in the browser.
-const pollTimeout = 10 * time.Minute
+//
+// Same rationale as pollInterval — var, not const, so the 10-minute (or
+// 5-minute) production windows can be reduced to milliseconds in tests.
+var pollTimeout = 10 * time.Minute
+
+// tierUpgradeTimeout is the upper bound on pollForTierUpgrade. Production
+// is 5 minutes; tests lower it.
+var tierUpgradeTimeout = 5 * time.Minute
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -238,7 +248,7 @@ func pollForAuthCompletion(sessionID string) (*authResult, error) {
 // pollForTierUpgrade polls GET /auth/me until the tier changes, up to 5 minutes.
 func pollForTierUpgrade(cfg *cliconfig.Config) error {
 	url := fmt.Sprintf("%s/auth/me", APIBaseURL)
-	deadline := time.Now().Add(5 * time.Minute)
+	deadline := time.Now().Add(tierUpgradeTimeout)
 	originalTier := cfg.Tier
 
 	for time.Now().Before(deadline) {

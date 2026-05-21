@@ -162,15 +162,48 @@ func UseDefault() Backend {
 
 // ── keychain backend ────────────────────────────────────────────────────────
 
-// keychainBackend uses github.com/zalando/go-keyring, which routes to:
+// keyringProvider is the minimal subset of github.com/zalando/go-keyring we
+// need. Extracting this as an interface lets the test suite exercise the
+// keychainBackend wrapping logic (error mapping, idempotency, etc.) without
+// hitting the real OS keychain — which is itself environment-dependent and
+// can't be reliably probed in CI.
+type keyringProvider interface {
+	Get(service, account string) (string, error)
+	Set(service, account, value string) error
+	Delete(service, account string) error
+}
+
+// realKeyring is the production implementation backed by go-keyring.
+type realKeyring struct{}
+
+func (realKeyring) Get(s, a string) (string, error)    { return keyring.Get(s, a) }
+func (realKeyring) Set(s, a, v string) error           { return keyring.Set(s, a, v) }
+func (realKeyring) Delete(s, a string) error           { return keyring.Delete(s, a) }
+
+// keyringErrNotFound is the sentinel returned by realKeyring on miss.
+// Extracted so tests can wrap their fake's "not found" return through the
+// same Is() check.
+var keyringErrNotFound = keyring.ErrNotFound
+
+// keychainBackend uses a keyringProvider, which in production routes to:
 //   - macOS:   Keychain (security framework)
 //   - Linux:   libsecret / Secret Service (org.freedesktop.secrets, DBus)
 //   - Windows: Credential Manager (wincred)
-type keychainBackend struct{}
+type keychainBackend struct {
+	// provider may be nil; nil => use the real OS keychain.
+	provider keyringProvider
+}
+
+func (k *keychainBackend) ring() keyringProvider {
+	if k.provider != nil {
+		return k.provider
+	}
+	return realKeyring{}
+}
 
 func (k *keychainBackend) Get() (string, error) {
-	v, err := keyring.Get(ServiceName, AccountName)
-	if errors.Is(err, keyring.ErrNotFound) {
+	v, err := k.ring().Get(ServiceName, AccountName)
+	if errors.Is(err, keyringErrNotFound) {
 		return "", ErrNotFound
 	}
 	if err != nil {
@@ -183,18 +216,18 @@ func (k *keychainBackend) Set(value string) error {
 	if value == "" {
 		return k.Delete()
 	}
-	if err := keyring.Set(ServiceName, AccountName, value); err != nil {
+	if err := k.ring().Set(ServiceName, AccountName, value); err != nil {
 		return fmt.Errorf("keychain set: %w", err)
 	}
 	return nil
 }
 
 func (k *keychainBackend) Delete() error {
-	err := keyring.Delete(ServiceName, AccountName)
+	err := k.ring().Delete(ServiceName, AccountName)
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, keyring.ErrNotFound) {
+	if errors.Is(err, keyringErrNotFound) {
 		return nil // idempotent
 	}
 	return fmt.Errorf("keychain delete: %w", err)
@@ -215,11 +248,11 @@ func (k *keychainBackend) Available() bool {
 	if os.Getenv("INSTANT_DISABLE_KEYCHAIN") == "1" {
 		return false
 	}
-	_, err := keyring.Get(ServiceName, AccountName)
+	_, err := k.ring().Get(ServiceName, AccountName)
 	if err == nil {
 		return true
 	}
-	if errors.Is(err, keyring.ErrNotFound) {
+	if errors.Is(err, keyringErrNotFound) {
 		return true
 	}
 	return false
