@@ -19,15 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: cli
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: cli/go.mod
       - uses: github/codeql-action/init@v3
         with:
           languages: go
           queries: security-extended
-      - run: go build ./...
+      - name: Build
+        working-directory: cli
+        run: go build ./...
       - uses: github/codeql-action/analyze@v3
         with:
           category: "/language:go"

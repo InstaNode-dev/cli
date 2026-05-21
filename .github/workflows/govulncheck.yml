@@ -16,10 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: cli
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: cli/go.mod
           check-latest: true
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
+      - working-directory: cli
+        run: govulncheck ./...
