@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/instant-dev/cli/internal/cliconfig"
-	"github.com/instant-dev/cli/internal/tokens"
+	"github.com/InstaNode-dev/cli/internal/cliconfig"
+	"github.com/InstaNode-dev/cli/internal/tokens"
 )
 
 // pollInterval is how often the CLI checks for auth completion.

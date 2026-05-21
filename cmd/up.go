@@ -44,7 +44,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/instant-dev/cli/internal/tokens"
+	"github.com/InstaNode-dev/cli/internal/tokens"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

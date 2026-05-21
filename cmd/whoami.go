@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/instant-dev/cli/internal/cliconfig"
-	"github.com/instant-dev/cli/internal/secretstore"
+	"github.com/InstaNode-dev/cli/internal/cliconfig"
+	"github.com/InstaNode-dev/cli/internal/secretstore"
 	"github.com/spf13/cobra"
 )
 

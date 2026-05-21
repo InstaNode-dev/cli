@@ -5,7 +5,7 @@ Zero-friction infrastructure CLI for [instanode.dev](https://instanode.dev).
 ## Install
 
 ```bash
-go install github.com/instant-dev/cli@latest
+go install github.com/InstaNode-dev/cli@latest
 ```
 
 ## Usage

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/instant-dev/cli/internal/tokens"
+	"github.com/InstaNode-dev/cli/internal/tokens"
 	"github.com/spf13/cobra"
 )
 

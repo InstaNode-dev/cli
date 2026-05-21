@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/instant-dev/cli/internal/cliconfig"
-	"github.com/instant-dev/cli/internal/secretstore"
+	"github.com/InstaNode-dev/cli/internal/cliconfig"
+	"github.com/InstaNode-dev/cli/internal/secretstore"
 )
 
 var _ = httpListTimeout // documented constant; referenced in tests / future refactor

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/instant-dev/cli/internal/secretstore"
+	"github.com/InstaNode-dev/cli/internal/secretstore"
 )
 
 // ErrNotLoggedIn is returned when an action requires authentication

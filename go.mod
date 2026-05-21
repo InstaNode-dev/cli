@@ -1,4 +1,4 @@
-module github.com/instant-dev/cli
+module github.com/InstaNode-dev/cli
 
 go 1.23
 

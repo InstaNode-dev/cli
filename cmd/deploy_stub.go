@@ -65,7 +65,7 @@ Use one of these surfaces today:
          -F "tarball=@./app.tar.gz"
 
 Track the upcoming native CLI support at:
-  https://github.com/instant-dev/cli/issues
+  https://github.com/InstaNode-dev/cli/issues
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
