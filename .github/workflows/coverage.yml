@@ -32,8 +32,9 @@ jobs:
           go-version-file: cli/go.mod
       - name: Generate coverage
         working-directory: cli
-        run: go test ./... -short -coverprofile=coverage.out -covermode=atomic || true
+        run: go test ./... -short -coverprofile=coverage.out -covermode=atomic
       - uses: codecov/codecov-action@v4
+        if: always()
         with:
           files: cli/coverage.out
           flags: cli
