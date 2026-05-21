@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/instant-dev/cli/internal/cliconfig"
-	"github.com/instant-dev/cli/internal/secretstore"
+	"github.com/InstaNode-dev/cli/internal/cliconfig"
+	"github.com/InstaNode-dev/cli/internal/secretstore"
 )
 
 // ── T16 P2-1 — structured error envelope parsing.

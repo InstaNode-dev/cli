@@ -34,8 +34,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/instant-dev/cli/internal/secretstore"
-	"github.com/instant-dev/cli/internal/tokens"
+	"github.com/InstaNode-dev/cli/internal/secretstore"
+	"github.com/InstaNode-dev/cli/internal/tokens"
 	"github.com/spf13/cobra"
 )
 

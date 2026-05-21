@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/instant-dev/cli/cmd"
+	"github.com/InstaNode-dev/cli/cmd"
 )
 
 // B15-P0 (2) — build-info stamping. Wired in at link time via:
