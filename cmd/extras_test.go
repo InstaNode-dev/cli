@@ -97,8 +97,9 @@ func TestRunResourceDetail_Success_HumanOutput(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"token":"tok","id":"id-1","resource_type":"postgres","name":"app",
 			"env":"production","tier":"pro","status":"active",
-			"connection_url":"postgres://u:p@x/db","created_at":"2026-01-01",
-			"expires_at":"2026-12-31"
+			"connection_url":"postgres://u:p@x/db",
+			"receive_url":"https://hooks.instanode.dev/tok",
+			"created_at":"2026-01-01","expires_at":"2026-12-31"
 		}`))
 	}))
 	defer srv.Close()
