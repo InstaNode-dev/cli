@@ -389,7 +389,7 @@ func fetchExistingResources(env string) ([]resourceListItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 401: unauthenticated. For anonymous callers this is expected (no
 	// resources to reuse, no error); for callers with a token it means the
@@ -460,7 +460,7 @@ func provisionForUp(decl manifestRsrc, env string) (*provisionResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized && haveAuth() {
 		return nil, errSessionExpiredSentinel
@@ -539,7 +539,7 @@ func fetchCredentials(token string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("server %d: %s", resp.StatusCode, truncate(string(raw), 120))

@@ -286,7 +286,9 @@ func TestLoadAnonymousTokens_WithEntries(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("expected 2 anon tokens, got %d", len(out))
 	}
-	if !((out[0] == "tok-1" && out[1] == "tok-2") || (out[0] == "tok-2" && out[1] == "tok-1")) {
+	order1 := out[0] == "tok-1" && out[1] == "tok-2"
+	order2 := out[0] == "tok-2" && out[1] == "tok-1"
+	if !order1 && !order2 {
 		t.Errorf("unexpected token slice: %v", out)
 	}
 }

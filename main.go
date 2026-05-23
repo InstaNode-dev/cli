@@ -41,7 +41,7 @@ func run(args []string, stderr io.Writer) int {
 
 	err := cmd.ExecuteWithArgs(args)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 	}
 	// Translate any error returned by the cobra tree into the documented
 	// exit-code contract. A nil error exits 0; an *ExitCodeError carries its

@@ -184,7 +184,7 @@ func createCLISession(anonTokens []string) (*cliSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -216,7 +216,7 @@ func pollForAuthCompletion(sessionID string) (*authResult, error) {
 		}
 
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusAccepted {
 			// Still pending — print a progress dot and wait.
@@ -242,7 +242,7 @@ func pollForAuthCompletion(sessionID string) (*authResult, error) {
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, raw)
 	}
 
-	return nil, fmt.Errorf("timed out waiting for login (%.0f minutes). Try again.", pollTimeout.Minutes())
+	return nil, fmt.Errorf("timed out waiting for login after %.0f minutes; try again", pollTimeout.Minutes())
 }
 
 // pollForTierUpgrade polls GET /auth/me until the tier changes, up to 5 minutes.
@@ -267,7 +267,7 @@ func pollForTierUpgrade(cfg *cliconfig.Config) error {
 			TeamName string `json:"team_name"`
 		}
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err := json.Unmarshal(raw, &result); err != nil {
 			time.Sleep(pollInterval)
 			continue
