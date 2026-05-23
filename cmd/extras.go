@@ -117,7 +117,7 @@ func runResourceDetail(cmd *cobra.Command, token string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if haveAuth() {
@@ -169,36 +169,36 @@ func runResourceDetail(cmd *cobra.Command, token string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "TOKEN\t%s\n", detail.Token)
+	_, _ = fmt.Fprintf(w, "TOKEN\t%s\n", detail.Token)
 	if detail.ID != "" {
-		fmt.Fprintf(w, "ID\t%s\n", detail.ID)
+		_, _ = fmt.Fprintf(w, "ID\t%s\n", detail.ID)
 	}
 	if detail.ResourceType != "" {
-		fmt.Fprintf(w, "TYPE\t%s\n", detail.ResourceType)
+		_, _ = fmt.Fprintf(w, "TYPE\t%s\n", detail.ResourceType)
 	}
 	if detail.Name != "" {
-		fmt.Fprintf(w, "NAME\t%s\n", detail.Name)
+		_, _ = fmt.Fprintf(w, "NAME\t%s\n", detail.Name)
 	}
 	if detail.Env != "" {
-		fmt.Fprintf(w, "ENV\t%s\n", detail.Env)
+		_, _ = fmt.Fprintf(w, "ENV\t%s\n", detail.Env)
 	}
 	if detail.Tier != "" {
-		fmt.Fprintf(w, "TIER\t%s\n", detail.Tier)
+		_, _ = fmt.Fprintf(w, "TIER\t%s\n", detail.Tier)
 	}
 	if detail.Status != "" {
-		fmt.Fprintf(w, "STATUS\t%s\n", detail.Status)
+		_, _ = fmt.Fprintf(w, "STATUS\t%s\n", detail.Status)
 	}
 	if detail.ConnectionURL != "" {
-		fmt.Fprintf(w, "URL\t%s\n", detail.ConnectionURL)
+		_, _ = fmt.Fprintf(w, "URL\t%s\n", detail.ConnectionURL)
 	}
 	if detail.ReceiveURL != "" {
-		fmt.Fprintf(w, "RECEIVE_URL\t%s\n", detail.ReceiveURL)
+		_, _ = fmt.Fprintf(w, "RECEIVE_URL\t%s\n", detail.ReceiveURL)
 	}
 	if detail.CreatedAt != "" {
-		fmt.Fprintf(w, "CREATED\t%s\n", detail.CreatedAt)
+		_, _ = fmt.Fprintf(w, "CREATED\t%s\n", detail.CreatedAt)
 	}
 	if detail.ExpiresAt != "" {
-		fmt.Fprintf(w, "EXPIRES\t%s\n", detail.ExpiresAt)
+		_, _ = fmt.Fprintf(w, "EXPIRES\t%s\n", detail.ExpiresAt)
 	}
 	return w.Flush()
 }
@@ -235,7 +235,7 @@ func runResourceDelete(cmd *cobra.Command, token string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized {
 		if haveAuth() {

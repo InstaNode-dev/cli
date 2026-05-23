@@ -10,11 +10,10 @@ import (
 // It also lets each test inject specific errors on Get/Set/Delete to drive
 // every branch of the wrapper.
 type fakeKeyring struct {
-	store      map[string]string
-	getErr     error
-	setErr     error
-	deleteErr  error
-	notFoundFn func(err error) bool
+	store     map[string]string
+	getErr    error
+	setErr    error
+	deleteErr error
 }
 
 func newFakeKeyring() *fakeKeyring {

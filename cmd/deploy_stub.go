@@ -89,7 +89,7 @@ func newDeployStub(verb, extra string) *cobra.Command {
 		Short: short,
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintf(cmd.ErrOrStderr(),
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 				"`instant deploy %s` is not yet implemented in the CLI.\n"+
 					"Use one of:\n"+
 					"  - MCP tool   (Claude Code / Cursor: %s)\n"+

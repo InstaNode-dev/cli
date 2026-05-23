@@ -89,7 +89,7 @@ func runResources(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// T16 P1-2 — uniform 401 handling.
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -171,7 +171,7 @@ func runResources(cmd *cobra.Command) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TOKEN\tTYPE\tNAME\tTIER\tSTATUS")
+	_, _ = fmt.Fprintln(w, "TOKEN\tTYPE\tNAME\tTIER\tSTATUS")
 	for _, r := range result.Items {
 		shortToken := r.Token
 		if len(shortToken) > 12 {
@@ -181,10 +181,10 @@ func runResources(cmd *cobra.Command) error {
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			shortToken, r.ResourceType, name, r.Tier, r.Status)
 	}
-	w.Flush()
+	_ = w.Flush()
 	return nil
 }
 

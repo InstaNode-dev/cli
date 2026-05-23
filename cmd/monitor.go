@@ -209,7 +209,7 @@ func provisionResource(endpoint, name string) (*provisionResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized && haveAuth() {
@@ -282,17 +282,17 @@ With --json, output is a machine-readable JSON array of token entries
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "TOKEN\tNAME\tSOURCE\tCREATED")
+		_, _ = fmt.Fprintln(w, "TOKEN\tNAME\tSOURCE\tCREATED")
 		for _, e := range store.Entries {
 			shortToken := e.Token
 			if len(shortToken) > 12 {
 				shortToken = shortToken[:12] + "…"
 			}
 			created := e.CreatedAt.Format("2006-01-02")
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 				shortToken, e.Name, e.Source, created)
 		}
-		w.Flush()
+		_ = w.Flush()
 		return nil
 	},
 }
