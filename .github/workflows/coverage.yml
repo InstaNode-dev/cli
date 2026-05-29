@@ -14,28 +14,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: cli
           # Full history so diff-cover can resolve origin/<base_ref>.
           fetch-depth: 0
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: InstaNode-dev/common
           path: common
         continue-on-error: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: InstaNode-dev/proto
           path: proto
         continue-on-error: true
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: cli/go.mod
       - name: Generate coverage
         working-directory: cli
         run: go test ./... -short -coverprofile=coverage.out -covermode=atomic
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v6
         if: always()
         with:
           files: cli/coverage.out
@@ -47,7 +47,7 @@ jobs:
       # covered by a test (100%), and the project floor stays >=95%.
       # Tool: diff-cover (https://github.com/Bachmann1234/diff-cover).
       # ------------------------------------------------------------------
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: github.event_name == 'pull_request'
         with:
           python-version: '3.12'
