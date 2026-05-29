@@ -3,3 +3,6 @@ bin/
 
 # Internal Claude Code skills
 .claude/
+
+# GoReleaser snapshot/release artifacts
+dist/

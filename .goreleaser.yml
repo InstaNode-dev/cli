@@ -1,0 +1,164 @@
+# .goreleaser.yml — release pipeline for the `instant` CLI.
+#
+# CLI-MCP-13R2 (BugBash QA round 2 strategic gap): the CLI had no release
+# workflow. Every other backend service in instanode.dev auto-builds on push
+# (CLAUDE.md rule 15); the CLI's only install path was `go install`, which
+# requires a Go toolchain and pins the user to whatever HEAD happens to be.
+#
+# This config + .github/workflows/release.yml + install.sh together close
+# that gap:
+#
+#   * Tagging `vX.Y.Z` on master triggers cross-compiled builds for
+#     darwin / linux / windows × amd64 / arm64.
+#   * Binaries are stamped with the tag's version, the commit SHA, and the
+#     UTC build time (matches the Makefile's ldflag scheme — CLAUDE.md rule
+#     14 build-SHA gate still applies via `instant --version`).
+#   * `instant_v0.2.0_darwin_arm64.tar.gz` etc. land on the GitHub release
+#     page; `checksums.txt` is signed by sigstore cosign (keyless OIDC).
+#   * `install.sh` curl-pipe-sh fetches the right archive for the user's
+#     platform.
+#
+# We intentionally do NOT publish to Homebrew / Scoop / apt yet — that's a
+# follow-up PR. This release pipeline keeps the dependency footprint to:
+#   - goreleaser (pinned action SHA in release.yml)
+#   - syft       (SBOM, pinned)
+#   - cosign     (signing, pinned)
+# Everything else is removed.
+
+version: 2
+
+project_name: instant
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: instant
+    binary: instant
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # No 32-bit / mips targets — the agent surface is `INSTANT_API_URL` over
+    # HTTPS, which is hard to use from constrained devices anyway.
+    ignore:
+      # Windows on ARM64 ships, but it's a niche; revisit if anyone files
+      # an issue. Linux/arm64 + Darwin/arm64 cover the GH Actions runner
+      # matrix and Apple Silicon developer laptops.
+      - goos: windows
+        goarch: arm64
+    # ldflags mirror the Makefile's `make build` target so the release
+    # binary's `--version` line matches the source of truth. CLAUDE.md
+    # rule 14 (build-SHA gate) reads from these via `instant --version`.
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildTime={{.Date}}
+
+archives:
+  - id: instant-archive
+    # GoReleaser v2 renamed `name_template` keys — the format below is the
+    # v2 canonical layout: `<project>_<version>_<os>_<arch>`. install.sh
+    # depends on this exact pattern.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}darwin
+      {{- else if eq .Os "linux" }}linux
+      {{- else if eq .Os "windows" }}windows{{ end }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Sigstore keyless signing via GitHub OIDC. The release workflow grants
+# `id-token: write` so cosign can mint a short-lived cert from Fulcio. No
+# private keys to manage. Verification:
+#
+#   cosign verify-blob \
+#     --certificate-identity-regexp 'https://github.com/InstaNode-dev/cli/.github/workflows/release.yml@.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --signature checksums.txt.sig \
+#     --certificate checksums.txt.pem \
+#     checksums.txt
+signs:
+  - id: cosign-checksums
+    cmd: cosign
+    artifacts: checksums
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+# SBOM generation (CycloneDX via syft). Lands alongside binaries on the
+# release page. cyclonedx is the CSO/CISA-preferred format.
+sboms:
+  - id: instant-sbom
+    artifacts: archive
+
+release:
+  github:
+    owner: InstaNode-dev
+    name: cli
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  header: |
+    `instant` CLI release {{.Version}}.
+
+    ## Install (one-liner)
+
+    ```bash
+    curl -sSfL https://instanode.dev/install.sh | sh
+    ```
+
+    Or download the archive for your platform from the assets below and
+    drop the binary on `$PATH`.
+
+    ## Verify the release
+
+    Checksums are signed with sigstore cosign (keyless OIDC). To verify:
+
+    ```bash
+    cosign verify-blob \
+      --certificate-identity-regexp 'https://github.com/InstaNode-dev/cli/.github/workflows/release.yml@.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --signature checksums.txt.sig \
+      --certificate checksums.txt.pem \
+      checksums.txt
+    ```
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^test:'
+      - '^ci:'
+      - Merge pull request
