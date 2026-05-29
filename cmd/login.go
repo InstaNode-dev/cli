@@ -334,27 +334,54 @@ func safeBrowserURL(raw string) (string, error) {
 	return raw, nil
 }
 
+// browserLauncherForGOOS returns the helper binary + arg list that opens a
+// URL in the user's default browser on the given GOOS. Extracted so the
+// per-platform fan-out is testable from a single-OS CI runner (the variant
+// not matching runtime.GOOS would otherwise be uncovered, which is what
+// our 100%-patch-coverage gate cares about).
+//
+// nil result means "no known helper for this GOOS"; caller should skip the
+// exec attempt and tell the user to open the URL manually.
+func browserLauncherForGOOS(goos, safeURL string) (name string, args []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{safeURL}
+	case "linux":
+		return "xdg-open", []string{safeURL}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", safeURL}
+	}
+	return "", nil
+}
+
+// openBrowserOn is the GOOS-injectable core of openBrowser; the public
+// wrapper passes runtime.GOOS but tests can drive every per-OS branch
+// (including the unknown-GOOS fallback and the exec-failure path) from a
+// single CI runner. Returns "ok" / "refused" / "no-helper" / "exec-failed"
+// so a test can assert outcome without parsing stderr.
+func openBrowserOn(goos, rawURL string) string {
+	safe, verr := safeBrowserURL(rawURL)
+	if verr != nil {
+		fmt.Fprintf(os.Stderr, "Refusing to open URL: %v\n", verr)
+		return "refused"
+	}
+	name, args := browserLauncherForGOOS(goos, safe)
+	if name == "" {
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
+		return "no-helper"
+	}
+	if err := exec.Command(name, args...).Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
+		return "exec-failed"
+	}
+	return "ok"
+}
+
 // openBrowser opens url in the user's default browser, best-effort.
 //
 // The url is validated by safeBrowserURL before being passed to any helper
 // binary; a server-controlled URL with a hostile scheme or leading-dash
 // payload is refused with a clear stderr message rather than executed.
 func openBrowser(rawURL string) {
-	safe, verr := safeBrowserURL(rawURL)
-	if verr != nil {
-		fmt.Fprintf(os.Stderr, "Refusing to open URL: %v\n", verr)
-		return
-	}
-	var err error
-	switch runtime.GOOS {
-	case "darwin":
-		err = exec.Command("open", safe).Start()
-	case "linux":
-		err = exec.Command("xdg-open", safe).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", safe).Start()
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
-	}
+	_ = openBrowserOn(runtime.GOOS, rawURL)
 }

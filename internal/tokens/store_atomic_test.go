@@ -27,6 +27,37 @@ func TestSave_AtomicNoTempLeak(t *testing.T) {
 	}
 }
 
+// TestSave_RenameFailureReturnsError exercises the rename-failure branch.
+// Pointing the store at a path whose parent directory is a regular file
+// makes os.WriteFile of the .tmp succeed (we're writing inside the parent
+// of `path`, which is the temp dir) BUT — wait, no: WriteFile would fail
+// upstream. To hit the rename-failure branch specifically we craft a path
+// where the .tmp can be written but the rename target is a directory: on
+// POSIX, os.Rename(file, existingDir) returns ENOTEMPTY / EISDIR, which is
+// exactly the failure mode our cleanup branch handles.
+func TestSave_RenameFailureReturnsError(t *testing.T) {
+	dir := setupTempHome(t)
+	storePath := filepath.Join(dir, ".instant-tokens")
+	// Make storePath a non-empty directory so os.Rename(tmp, storePath)
+	// returns an error and we exercise the cleanup branch.
+	if err := os.Mkdir(storePath, 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(storePath, "block"), []byte("x"), 0600); err != nil {
+		t.Fatalf("seed inside dir: %v", err)
+	}
+
+	s := &Store{path: storePath}
+	err := s.Add(Entry{Token: "tok-rename-fail", Name: "x", Type: "postgres", URL: "postgres://x"})
+	if err == nil {
+		t.Fatalf("expected Save to return error when target path is a non-empty dir")
+	}
+	// The .tmp sibling MUST be cleaned up by the failure-cleanup branch.
+	if _, statErr := os.Stat(storePath + ".tmp"); !os.IsNotExist(statErr) {
+		t.Errorf(".tmp file should have been removed after rename failure, got err=%v", statErr)
+	}
+}
+
 // TestSave_RenameOverwritesExistingFile verifies the rename idiom replaces
 // an existing file (not appended). Cross-platform — works on Linux + macOS.
 func TestSave_RenameOverwritesExistingFile(t *testing.T) {
