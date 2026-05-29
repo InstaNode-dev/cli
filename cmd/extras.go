@@ -103,10 +103,21 @@ var (
 )
 
 // runResourceDetail GETs /api/v1/resources/:token and renders the result.
+//
+// CLI-MCP-11: this command requires auth — the token in the URL identifies
+// the resource being inspected, NOT the caller. Pre-checking haveAuth() and
+// short-circuiting with errAuthRequired (exit 3) keeps the exit-code
+// contract consistent with `instant resources` (list), regardless of
+// whether the API treats a path token as a bearer for some routes today.
+// The post-call 401 branch below stays as defense-in-depth (covers expired
+// PAT, server-side policy change, etc.).
 func runResourceDetail(cmd *cobra.Command, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return fmt.Errorf("token is required")
+	}
+	if !haveAuth() {
+		return errAuthRequired("authentication required — run `instant login` first")
 	}
 	url := fmt.Sprintf("%s/api/v1/resources/%s", APIBaseURL, token)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -206,10 +217,18 @@ func runResourceDetail(cmd *cobra.Command, token string) error {
 // runResourceDelete DELETEs /api/v1/resources/:token. Requires --yes (or a
 // 'y' from an interactive terminal) to actually fire the request — destructive
 // commands MUST NOT silently delete on a typo'd token.
+//
+// CLI-MCP-11 (paired with runResourceDetail): a destructive command without
+// auth must exit 3 BEFORE any side effects (including the interactive
+// confirmation prompt) — otherwise an unauth user can be coaxed into
+// confirming a delete that then 401s with the wrong exit code.
 func runResourceDelete(cmd *cobra.Command, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return fmt.Errorf("token is required")
+	}
+	if !haveAuth() {
+		return errAuthRequired("authentication required — run `instant login` first")
 	}
 	if !resourceDeleteYes {
 		// Interactive confirmation when stdin is a TTY; otherwise abort
@@ -271,10 +290,13 @@ func runResourceDelete(cmd *cobra.Command, token string) error {
 }
 
 func init() {
-	// storage / webhook / vector — same --name plumbing as monitor.go.
+	// storage / webhook / vector — same --name + --env plumbing as monitor.go.
+	// CLI-MCP-8: --env is forwarded on every provisioning verb.
 	for _, c := range []*cobra.Command{storageNewCmd, webhookNewCmd, vectorNewCmd} {
 		c.Flags().StringVar(&resourceName, "name", "",
 			"Resource name (required, 1–64 chars, matches ^[A-Za-z0-9][A-Za-z0-9 _-]*$)")
+		c.Flags().StringVar(&resourceEnv, "env", "",
+			"Provisioning environment (default: server-side \"development\"; common: development|staging|production)")
 		_ = c.MarkFlagRequired("name")
 	}
 	storageCmd.AddCommand(storageNewCmd)
