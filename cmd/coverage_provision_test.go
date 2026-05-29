@@ -15,7 +15,7 @@ func TestProvisionResource_NetworkError(t *testing.T) {
 	APIBaseURL = "http://127.0.0.1:1"
 	t.Cleanup(func() { APIBaseURL = prev })
 
-	_, err := provisionResource("/db/new", "x")
+	_, err := provisionResource("/db/new", "x", "")
 	if err == nil {
 		t.Fatal("expected network error")
 	}
@@ -34,7 +34,7 @@ func TestProvisionResource_SessionExpired(t *testing.T) {
 	HTTPClient = &http.Client{Transport: &authTransport{base: http.DefaultTransport, apiKey: "k"}}
 	t.Cleanup(func() { HTTPClient = prevC })
 
-	_, err := provisionResource("/db/new", "x")
+	_, err := provisionResource("/db/new", "x", "")
 	if err == nil || !strings.Contains(err.Error(), "session expired") {
 		t.Errorf("got %v", err)
 	}
@@ -49,7 +49,7 @@ func TestProvisionResource_APIError(t *testing.T) {
 	APIBaseURL = srv.URL
 	t.Cleanup(func() { APIBaseURL = prev })
 
-	_, err := provisionResource("/db/new", "x")
+	_, err := provisionResource("/db/new", "x", "")
 	if err == nil {
 		t.Fatal("expected api error")
 	}
@@ -64,7 +64,7 @@ func TestProvisionResource_BadJSON(t *testing.T) {
 	APIBaseURL = srv.URL
 	t.Cleanup(func() { APIBaseURL = prev })
 
-	_, err := provisionResource("/db/new", "x")
+	_, err := provisionResource("/db/new", "x", "")
 	if err == nil || !strings.Contains(err.Error(), "parsing") {
 		t.Errorf("got %v", err)
 	}
@@ -79,7 +79,7 @@ func TestProvisionResource_UnexpectedResponse(t *testing.T) {
 	APIBaseURL = srv.URL
 	t.Cleanup(func() { APIBaseURL = prev })
 
-	_, err := provisionResource("/db/new", "x")
+	_, err := provisionResource("/db/new", "x", "")
 	if err == nil || !strings.Contains(err.Error(), "unexpected response") {
 		t.Errorf("got %v", err)
 	}

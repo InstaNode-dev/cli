@@ -34,6 +34,20 @@ var nameRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]*$`)
 // resourceName is bound to the required --name flag on every `new` command.
 var resourceName string
 
+// resourceEnv is bound to the optional --env flag on every `new` command.
+//
+// CLI-MCP-8 (BugBash QA round 2): every provisioning verb on the CLI used to
+// drop `env` on the request body. The API has honored an `env` parameter
+// since migration 026 (defaults to "development" when omitted — CLAUDE.md
+// rule 11). Without a CLI surface, an agent had no way to provision into
+// "production" without falling back to curl. Empty here means "don't send
+// the field" — the server applies its documented default (development).
+// Values are not validated client-side; the server enforces the regex +
+// policy and surfaces a structured 400 if invalid, so we don't second-guess
+// it (this also keeps the CLI forward-compatible with future env-policy
+// changes).
+var resourceEnv string
+
 // validateResourceName applies the server-side name contract locally so the
 // CLI fails fast with a clear message instead of a bare HTTP 400.
 func validateResourceName(name string) error {
@@ -134,7 +148,7 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 			return err
 		}
 
-		creds, err := provisionResource(endpoint, name)
+		creds, err := provisionResource(endpoint, name, resourceEnv)
 		if err != nil {
 			return fmt.Errorf("provisioning failed: %w", err)
 		}
@@ -169,6 +183,19 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 		if creds.Tier != "" {
 			fmt.Printf("tier  %s\n", creds.Tier)
 		}
+		// CLI-MCP-8: surface the resolved env (and env_override_reason when
+		// the server downgraded the request — e.g. anonymous caller asking
+		// for production gets demoted to development with a reason string).
+		// Empty `creds.Env` against an older API build still prints the
+		// "development" fallback used for the local tokens cache above.
+		envOut := creds.Env
+		if envOut == "" {
+			envOut = "development"
+		}
+		fmt.Printf("env   %s\n", envOut)
+		if creds.EnvOverrideReason != "" {
+			fmt.Printf("env_override_reason  %s\n", creds.EnvOverrideReason)
+		}
 		if creds.Note != "" {
 			fmt.Printf("\n%s\n", creds.Note)
 		}
@@ -191,9 +218,14 @@ type provisionResponse struct {
 	// default (CLAUDE.md rule 11) — when empty. Used to key the local
 	// tokens cache so B15-P1 (7) anonymous-up idempotency can match on
 	// (type, name, env) without an API list call.
-	Env     string `json:"env"`
-	Note    string `json:"note"`
-	Upgrade string `json:"upgrade"`
+	Env string `json:"env"`
+	// EnvOverrideReason is set by the API when the requested env was
+	// downgraded server-side (e.g. anonymous caller asking for production
+	// gets demoted to "development" with a reason). CLI surfaces it so the
+	// user sees WHY their requested env didn't stick. May be empty.
+	EnvOverrideReason string `json:"env_override_reason"`
+	Note              string `json:"note"`
+	Upgrade           string `json:"upgrade"`
 }
 
 // provisionResource calls POST {APIBaseURL}{endpoint} and returns parsed credentials.
@@ -201,9 +233,18 @@ type provisionResponse struct {
 // T16 P1-2: a 401 against an authenticated request returns the uniform
 // errSessionExpired() error so the exit-code contract is consistent across
 // `resources`, `up`, and direct provisioning.
-func provisionResource(endpoint, name string) (*provisionResponse, error) {
+//
+// CLI-MCP-8: `env` is the optional `--env` flag. Empty == "don't send the
+// field" so the server applies its documented default (development). A
+// non-empty value is forwarded verbatim; server-side validation owns the
+// regex + policy.
+func provisionResource(endpoint, name, env string) (*provisionResponse, error) {
 	url := APIBaseURL + endpoint
-	body, _ := json.Marshal(map[string]string{"name": name})
+	payload := map[string]string{"name": name}
+	if env != "" {
+		payload["env"] = env
+	}
+	body, _ := json.Marshal(payload)
 
 	resp, err := HTTPClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -300,8 +341,12 @@ With --json, output is a machine-readable JSON array of token entries
 func init() {
 	// --name is REQUIRED on every provisioning command. Cobra surfaces a
 	// clear `required flag(s) "name" not set` error before RunE runs.
+	// --env is OPTIONAL (CLI-MCP-8). Empty == server default ("development",
+	// CLAUDE.md rule 11); set to "production" / "staging" / etc. to override.
 	for _, c := range []*cobra.Command{dbNewCmd, cacheNewCmd, nosqlNewCmd, queueNewCmd} {
 		c.Flags().StringVar(&resourceName, "name", "", "Resource name (required, 1–64 chars, matches ^[A-Za-z0-9][A-Za-z0-9 _-]*$)")
+		c.Flags().StringVar(&resourceEnv, "env", "",
+			"Provisioning environment (default: server-side \"development\"; common: development|staging|production)")
 		_ = c.MarkFlagRequired("name")
 	}
 
