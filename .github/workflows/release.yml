@@ -1,0 +1,73 @@
+name: release
+
+# CLI-MCP-13R2 — release pipeline for the `instant` CLI.
+#
+# Fires on a semver tag push (`v*.*.*`). Cross-compiles via GoReleaser,
+# generates SBOMs, signs the checksum file with sigstore cosign (keyless
+# OIDC), and publishes everything to the GitHub Release page.
+#
+# Why tag-driven instead of branch-driven: the other backend services in
+# instanode.dev auto-deploy on every push to `master` (CLAUDE.md rule 15),
+# but a CLI binary has a different shape — users install once and pin to
+# the latest published release. Tagging is the canonical "this is a real
+# release, not a transient build" signal.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Default permissions are read-only. Each job grants the minimum scope it
+# needs. `id-token: write` is required for sigstore keyless signing via
+# the GitHub OIDC issuer.
+permissions:
+  contents: read
+
+jobs:
+  goreleaser:
+    name: build, sign, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write   # publish artifacts to the release page
+      id-token: write   # sigstore OIDC for keyless signing
+      attestations: write  # SBOM attestation
+    steps:
+      # Full history + tags are required so GoReleaser can read the tag
+      # message and infer changelog scope.
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Third-party actions are PINNED to a commit SHA per CSO supply-chain
+      # policy. Renovate / Dependabot manages bumps; never use a floating
+      # tag in this workflow.
+      - name: Install cosign (sigstore)
+        # pinned: tag v3.7.0
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install syft (SBOM)
+        # pinned: tag v0.20.0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+
+      - name: Run GoReleaser
+        # pinned: tag v6.4.0
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # GITHUB_TOKEN is the per-job, repo-scoped, short-lived token —
+          # NOT a long-lived PAT. GoReleaser uses it to upload the
+          # release artifacts to the same repo.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
