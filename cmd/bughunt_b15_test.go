@@ -295,12 +295,42 @@ func TestExtras_StorageWebhookVector(t *testing.T) {
 	}
 }
 
+// authSetupForTest wires a saved API key + base URL into the package-global
+// HTTPClient so haveAuth() returns true. CLI-MCP-11 made `instant resource
+// <token>` (and `resource delete`) auth-required up-front — every test that
+// exercises those commands now needs an authenticated session even when the
+// mock would otherwise serve an anonymous path-token request.
+//
+// Returns a cleanup function the caller MUST defer/t.Cleanup so per-test
+// auth state doesn't leak across tests.
+func authSetupForTest(t *testing.T, srv string) func() {
+	t.Helper()
+	cfg := &cliconfig.Config{
+		APIKey:     "inst_test_pat",
+		Email:      "test@example.com",
+		APIBaseURL: srv,
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("authSetupForTest: save cfg: %v", err)
+	}
+	// Re-init the package HTTP client so it picks up the saved token via
+	// the authTransport. APIBaseURL gets stomped by initConfig from the
+	// saved cfg, so restore the mock URL afterwards.
+	initConfig()
+	APIBaseURL = srv
+	return func() {
+		_ = cliconfig.Clear()
+		_ = secretstore.Delete()
+	}
+}
+
 // TestExtras_ResourceDetail asserts `instant resource <token>` GETs the
 // detail endpoint and renders the connection URL + resource type.
 func TestExtras_ResourceDetail(t *testing.T) {
 	c := newITContext(t)
 	resetProvisionFlags()
 	_, token := c.provisionViaCLI("db", "detail-db")
+	t.Cleanup(authSetupForTest(t, c.srv))
 
 	stdout, _ := captureStdout(t, func() {
 		_, _, err := run("resource", token)
@@ -322,10 +352,15 @@ func TestExtras_ResourceDetail(t *testing.T) {
 // TestExtras_ResourceDeleteRequiresYes asserts the destructive command
 // REFUSES to delete without --yes when stdin is not a TTY. Agents that
 // pipe input would otherwise risk accidental deletes.
+//
+// CLI-MCP-11: the test sets up auth so the --yes gate (not the auth gate)
+// is the one being exercised — otherwise this test would pass for the
+// wrong reason after the unauth short-circuit landed.
 func TestExtras_ResourceDeleteRequiresYes(t *testing.T) {
 	c := newITContext(t)
 	resetProvisionFlags()
 	_, token := c.provisionViaCLI("db", "guarded-db")
+	t.Cleanup(authSetupForTest(t, c.srv))
 
 	// Pipe stdin to /dev/null so the "not a TTY" branch fires.
 	origStdin := os.Stdin
@@ -340,6 +375,10 @@ func TestExtras_ResourceDeleteRequiresYes(t *testing.T) {
 	if err == nil {
 		t.Fatalf("delete without --yes (non-TTY) must error; resource %s would be lost", token)
 	}
+	// Specifically the --yes gate, not the auth gate.
+	if strings.Contains(err.Error(), "authentication required") {
+		t.Fatalf("delete must fail on --yes gate, not auth gate: %v", err)
+	}
 	// The mock must still have the resource.
 	if c.mock.count() == 0 {
 		t.Errorf("delete without --yes must NOT actually delete; mock is now empty")
@@ -352,6 +391,7 @@ func TestExtras_ResourceDeleteWithYes(t *testing.T) {
 	c := newITContext(t)
 	resetProvisionFlags()
 	_, token := c.provisionViaCLI("db", "doomed-db")
+	t.Cleanup(authSetupForTest(t, c.srv))
 
 	stdout, _ := captureStdout(t, func() {
 		_, _, err := run("resource", "delete", token, "--yes")
@@ -381,6 +421,7 @@ func TestExtras_ResourceDelete_JSON(t *testing.T) {
 	c := newITContext(t)
 	resetProvisionFlags()
 	_, token := c.provisionViaCLI("db", "doomed-json-db")
+	t.Cleanup(authSetupForTest(t, c.srv))
 
 	stdout, _ := captureStdout(t, func() {
 		_, _, err := run("resource", "delete", token, "--yes", "--json")

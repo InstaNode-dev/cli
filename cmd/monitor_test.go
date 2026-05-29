@@ -29,7 +29,7 @@ func freshProvisionCmd(endpoint, resourceType string) (root *cobra.Command, name
 			if err := validateResourceName(bound); err != nil {
 				return err
 			}
-			_, err := provisionResource(endpoint, bound)
+			_, err := provisionResource(endpoint, bound, "")
 			return err
 		},
 	}

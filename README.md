@@ -25,6 +25,30 @@ instant login                         # Log in to your instanode.dev account
 instant whoami                        # Show current account
 ```
 
+### Targeting an environment
+
+Every `new` verb accepts an optional `--env` flag that the API honors
+(default: `development`; CLAUDE.md rule 11):
+
+```bash
+instant db new --name app-db --env production
+instant cache new --name app-cache --env staging
+```
+
+The response prints both the resolved `env` and — when the server downgraded
+a request (e.g. anonymous caller asking for `production`) — an
+`env_override_reason` line explaining why.
+
+## Multi-service stacks
+
+`instant stack new` is a CLI follow-up — not shipped yet. For multi-service
+stacks today, use either the MCP `create_stack` tool (Claude Code, Cursor,
+any MCP client) or a direct `POST /stacks/new` call against the API. The
+request schema lives at `https://api.instanode.dev/openapi.json`.
+
+Single-service deploys via the CLI are also still a follow-up — `instant
+deploy --help` prints the canonical MCP/curl paths.
+
 ## Build from source
 
 ```bash

@@ -90,6 +90,16 @@ type mockAPI struct {
 	// CLI that mistakenly sends id would 404. This pins the contract that
 	// /api/v1/resources/:id/credentials expects the token (a UUID).
 	idDifferentFromToken bool
+
+	// ── CLI-MCP-8 — env-shape modes for provision responses ─────────────
+	// envOverrideReason, when non-empty, is echoed in the response so the
+	// CLI's env_override_reason print path is exercised (server downgraded
+	// the requested env, e.g. anon → development with a reason).
+	envOverrideReason string
+	// omitEnvInProvision, when true, drops the `env` field from the
+	// provisioning response entirely — simulates an older API build that
+	// predates migration 026 so the CLI's empty-env fallback path runs.
+	omitEnvInProvision bool
 }
 
 // injectErrorOnProvision arms the mock to return a structured error envelope
@@ -365,6 +375,21 @@ func (m *mockAPI) handleProvision(w http.ResponseWriter, r *http.Request, rtype 
 	resp := map[string]any{
 		"ok": true, "token": token, "name": body.Name,
 		"tier": "anonymous", "env": env,
+	}
+	// CLI-MCP-8 — exercise the optional env_override_reason and the
+	// pre-mig-026 "no env field at all" shapes. Both knobs disarm on the
+	// next read so a test arms once and asserts deterministically.
+	m.mu.Lock()
+	reason := m.envOverrideReason
+	omitEnv := m.omitEnvInProvision
+	m.envOverrideReason = ""
+	m.omitEnvInProvision = false
+	m.mu.Unlock()
+	if reason != "" {
+		resp["env_override_reason"] = reason
+	}
+	if omitEnv {
+		delete(resp, "env")
 	}
 	if rtype == "webhook" {
 		res.ReceiveURL = "https://hooks.instanode.dev/" + token

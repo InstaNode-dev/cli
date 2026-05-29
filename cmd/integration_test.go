@@ -211,14 +211,23 @@ func lastSavedToken(t *testing.T) string {
 	return store.Entries[len(store.Entries)-1].Token
 }
 
-// resetProvisionFlags clears the global --name flag between table cases.
-// makeProvisionCmd binds the package-global resourceName; cobra retains the
-// last-parsed value, so a follow-up test could see stale state.
+// resetProvisionFlags clears the global --name + --env flags between table
+// cases. makeProvisionCmd binds the package-globals resourceName and
+// resourceEnv; cobra retains the last-parsed value, so a follow-up test
+// could see stale state. All seven provisioning groups (db / cache / nosql
+// / queue / storage / webhook / vector) are reset.
 func resetProvisionFlags() {
 	resourceName = ""
-	for _, group := range []*cobra.Command{dbCmd, cacheCmd, nosqlCmd, queueCmd} {
+	resourceEnv = ""
+	for _, group := range []*cobra.Command{dbCmd, cacheCmd, nosqlCmd, queueCmd, storageCmd, webhookCmd, vectorCmd} {
 		for _, sub := range group.Commands() {
 			_ = sub.Flags().Set("name", "")
+			// --env is optional so it may not be bound on older builds; the
+			// Set call is best-effort and silently no-ops on a missing flag.
+			if fl := sub.Flags().Lookup("env"); fl != nil {
+				_ = fl.Value.Set("")
+				fl.Changed = false
+			}
 		}
 	}
 }
