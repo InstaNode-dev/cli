@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -299,18 +301,87 @@ func loadAnonymousTokens() []string {
 	return out
 }
 
-// openBrowser opens url in the user's default browser, best-effort.
-func openBrowser(url string) {
-	var err error
-	switch runtime.GOOS {
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+// safeBrowserURL validates that raw is a well-formed http(s) URL whose first
+// character is not '-' (so the URL can never be interpreted as a flag by the
+// helper binary we exec). SEC-CLI FINDING-17.
+//
+// This is defense-in-depth: a hostile API server returning
+// `{"auth_url":"-Fpath"}` would otherwise have `open -F path` invoked on
+// macOS, exposing a local file in Finder. The CLI talks to TLS-protected
+// instanode.dev today so the threat model is narrow — but the cost of
+// hardening is < 20 LOC.
+func safeBrowserURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("empty URL")
 	}
+	// Reject leading dash so the URL can't be parsed as a flag by the
+	// underlying open/xdg-open/rundll32 helper.
+	if raw[0] == '-' {
+		return "", fmt.Errorf("refusing to open URL with leading '-': %q", raw)
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
+		return "", fmt.Errorf("parsing URL: %w", err)
 	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("refusing to open URL with scheme %q (only http/https allowed)", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("refusing to open URL with empty host: %q", raw)
+	}
+	return raw, nil
+}
+
+// browserLauncherForGOOS returns the helper binary + arg list that opens a
+// URL in the user's default browser on the given GOOS. Extracted so the
+// per-platform fan-out is testable from a single-OS CI runner (the variant
+// not matching runtime.GOOS would otherwise be uncovered, which is what
+// our 100%-patch-coverage gate cares about).
+//
+// nil result means "no known helper for this GOOS"; caller should skip the
+// exec attempt and tell the user to open the URL manually.
+func browserLauncherForGOOS(goos, safeURL string) (name string, args []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{safeURL}
+	case "linux":
+		return "xdg-open", []string{safeURL}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", safeURL}
+	}
+	return "", nil
+}
+
+// openBrowserOn is the GOOS-injectable core of openBrowser; the public
+// wrapper passes runtime.GOOS but tests can drive every per-OS branch
+// (including the unknown-GOOS fallback and the exec-failure path) from a
+// single CI runner. Returns "ok" / "refused" / "no-helper" / "exec-failed"
+// so a test can assert outcome without parsing stderr.
+func openBrowserOn(goos, rawURL string) string {
+	safe, verr := safeBrowserURL(rawURL)
+	if verr != nil {
+		fmt.Fprintf(os.Stderr, "Refusing to open URL: %v\n", verr)
+		return "refused"
+	}
+	name, args := browserLauncherForGOOS(goos, safe)
+	if name == "" {
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
+		return "no-helper"
+	}
+	if err := exec.Command(name, args...).Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")
+		return "exec-failed"
+	}
+	return "ok"
+}
+
+// openBrowser opens url in the user's default browser, best-effort.
+//
+// The url is validated by safeBrowserURL before being passed to any helper
+// binary; a server-controlled URL with a hostile scheme or leading-dash
+// payload is refused with a clear stderr message rather than executed.
+func openBrowser(rawURL string) {
+	_ = openBrowserOn(runtime.GOOS, rawURL)
 }
