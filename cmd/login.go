@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -299,16 +301,58 @@ func loadAnonymousTokens() []string {
 	return out
 }
 
+// safeBrowserURL validates that raw is a well-formed http(s) URL whose first
+// character is not '-' (so the URL can never be interpreted as a flag by the
+// helper binary we exec). SEC-CLI FINDING-17.
+//
+// This is defense-in-depth: a hostile API server returning
+// `{"auth_url":"-Fpath"}` would otherwise have `open -F path` invoked on
+// macOS, exposing a local file in Finder. The CLI talks to TLS-protected
+// instanode.dev today so the threat model is narrow — but the cost of
+// hardening is < 20 LOC.
+func safeBrowserURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("empty URL")
+	}
+	// Reject leading dash so the URL can't be parsed as a flag by the
+	// underlying open/xdg-open/rundll32 helper.
+	if raw[0] == '-' {
+		return "", fmt.Errorf("refusing to open URL with leading '-': %q", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parsing URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("refusing to open URL with scheme %q (only http/https allowed)", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("refusing to open URL with empty host: %q", raw)
+	}
+	return raw, nil
+}
+
 // openBrowser opens url in the user's default browser, best-effort.
-func openBrowser(url string) {
+//
+// The url is validated by safeBrowserURL before being passed to any helper
+// binary; a server-controlled URL with a hostile scheme or leading-dash
+// payload is refused with a clear stderr message rather than executed.
+func openBrowser(rawURL string) {
+	safe, verr := safeBrowserURL(rawURL)
+	if verr != nil {
+		fmt.Fprintf(os.Stderr, "Refusing to open URL: %v\n", verr)
+		return
+	}
 	var err error
 	switch runtime.GOOS {
 	case "darwin":
-		err = exec.Command("open", url).Start()
+		err = exec.Command("open", safe).Start()
 	case "linux":
-		err = exec.Command("xdg-open", url).Start()
+		err = exec.Command("xdg-open", safe).Start()
 	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", safe).Start()
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open browser automatically. Visit the URL above manually.\n")

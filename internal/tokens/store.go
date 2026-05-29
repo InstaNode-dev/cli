@@ -107,13 +107,27 @@ func Load() (*Store, error) {
 	return s, nil
 }
 
-// Save writes the store back to disk.
+// Save writes the store back to disk atomically — temp file + rename — so a
+// crash mid-write can never truncate ~/.instant-tokens and lose every
+// recorded anonymous token. SEC-CLI FINDING-18.
+//
+// The pattern mirrors cliconfig.Save (already in this repo).
 func (s *Store) Save() error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		// Best-effort cleanup of the temp file so a half-written sibling
+		// doesn't linger after a failed rename.
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Add appends a new entry and saves.
