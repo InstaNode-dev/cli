@@ -101,7 +101,10 @@ checksum:
 signs:
   - id: cosign-checksums
     cmd: cosign
-    artifacts: checksums
+    # GoReleaser v2 uses the singular `checksum` (the schema's enum), not
+    # `checksums`. The earlier v1 docs floated both — the v2 release
+    # rejected the plural form with `invalid list of artifacts to sign`.
+    artifacts: checksum
     signature: "${artifact}.sig"
     certificate: "${artifact}.pem"
     args:
