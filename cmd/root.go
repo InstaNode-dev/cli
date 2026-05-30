@@ -175,6 +175,48 @@ func init() {
 	// flag parsing — so the auth transport sees the flag value.
 	rootCmd.PersistentFlags().StringVar(&adHocToken, "token", "",
 		"Bearer token for this invocation (overrides INSTANT_TOKEN and saved login)")
+
+	// BUG-CLI-016 (QA 2026-05-29): cobra's default `completion` parent
+	// command prints its help and exits 0 when invoked with no shell
+	// argument. That's the wrong contract for CI/wrapper scripts —
+	// "no shell selected" is a usage error, not success. We need to
+	// force-init the default completion subtree (cobra normally adds
+	// it lazily inside Execute()), then stamp a RunE that returns an
+	// error so cobra-emitted exit propagates to main.go::ExitCodeFor.
+	// Sub-shells (`completion bash`, etc.) keep their original RunE —
+	// only the bare `completion` invocation changes.
+	rootCmd.InitDefaultCompletionCmd()
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "completion" {
+			c.RunE = func(cmd *cobra.Command, args []string) error {
+				_ = cmd.Help()
+				// Plain error → ExitCodeFor falls through to ExitGeneric (1).
+				// "shell argument required" is a usage error, not a runtime
+				// failure of the requested shell-completion generation.
+				return fmt.Errorf("instant completion: shell argument required (bash | zsh | fish | powershell)")
+			}
+			break
+		}
+	}
+
+	// BUG-CLI-041 (QA 2026-05-29): many CLIs accept both `version` and
+	// `--version`. Cobra wires `--version`/`-v` via rootCmd.Version,
+	// but `instant version` returned "unknown command 'version'" with
+	// exit=1 — confusing for users muscle-memorying `git version` /
+	// `node version` patterns. Register an explicit `version` alias
+	// that prints the same line cobra emits for `--version`.
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print version, commit SHA, build time (alias for `instant --version`)",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			// rootCmd.Version is shaped "vX.Y.Z (sha, buildtime)" by
+			// SetBuildInfo. Mirror cobra's default `--version` output
+			// ("instant version vX.Y.Z (sha, buildtime)") so a script
+			// that grep-greps either path sees the same string.
+			fmt.Printf("%s version %s\n", rootCmd.Name(), rootCmd.Version)
+		},
+	})
 }
 
 func initConfig() {
