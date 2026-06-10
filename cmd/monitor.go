@@ -216,7 +216,16 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 		}
 
 		fmt.Printf("ok    %-8s  %s\n", resourceType, creds.Token)
-		fmt.Printf("url   %s\n", creds.ConnectionURL)
+		// F2: /webhook/new returns receive_url (NOT connection_url), so a
+		// bare creds.ConnectionURL printed `url   ` (blank). Fall back to
+		// ReceiveURL like the local token-store code above already does, so
+		// webhook provisions show their real receiver URL. (--json already
+		// emits both fields via emitProvisionJSON.)
+		provisionURL := creds.ConnectionURL
+		if provisionURL == "" {
+			provisionURL = creds.ReceiveURL
+		}
+		fmt.Printf("url   %s\n", provisionURL)
 		if creds.Tier != "" {
 			fmt.Printf("tier  %s\n", creds.Tier)
 		}

@@ -98,6 +98,14 @@ func classifyError(err error) (code, message, agentAction string) {
 	if errors.As(err, &ec) {
 		switch ec.Code {
 		case ExitAuthRequired:
+			// F3: errSessionExpired() carries ExitSessionExpired (== ExitAuthRequired),
+			// so a 401 lands here. Distinguish a rejected-token "session expired" from
+			// a genuine "never authenticated" so the code + agent_action are accurate,
+			// and branch the advice on token SOURCE (an INSTANT_TOKEN-sourced reject is
+			// not fixed by `instant login` — the env var shadows it).
+			if strings.Contains(strings.ToLower(msg), "session expired") {
+				return "session_expired", msg, sessionExpiredAction()
+			}
 			return "auth_required", msg,
 				"run `instant login`, or set INSTANT_TOKEN to a Personal Access Token"
 		case ExitResourceFailed:
@@ -131,11 +139,24 @@ func classifyError(err error) (code, message, agentAction string) {
 	}
 
 	// Default: surface the raw message; agents read .error code regardless.
+	// (Reached for the plain-error errSessionExpiredSentinel path — the
+	// ExitCodeError variant is handled in the switch above.)
 	if strings.Contains(strings.ToLower(msg), "session expired") {
-		return "session_expired", msg,
-			"run `instant login` to re-authenticate"
+		return "session_expired", msg, sessionExpiredAction()
 	}
 	return "cli_error", msg, ""
+}
+
+// sessionExpiredAction returns the agent_action for a rejected-token (401)
+// error, branched on token SOURCE (F3). An INSTANT_TOKEN-sourced reject is not
+// fixed by `instant login` — the env var shadows any saved login — so advise
+// fixing/unsetting it instead. Mirrors errSessionExpired()'s human-message
+// branch so the JSON envelope and the text path stay consistent.
+func sessionExpiredAction() string {
+	if authFromEnvToken() {
+		return "fix or unset INSTANT_TOKEN — it shadows any saved `instant login`"
+	}
+	return "run `instant login` to re-authenticate"
 }
 
 // wrapJSONErr emits a JSON error envelope on stdout when --json is on, and

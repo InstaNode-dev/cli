@@ -99,12 +99,26 @@ func errAuthRequired(detail string) error {
 // a bearer token. Tests assert on this exact wording so the contract is
 // stable for downstream agents.
 //
+// F3: the advice branches on token SOURCE. When the active token came from
+// INSTANT_TOKEN (env), `instant login` is useless guidance — the env var
+// SHADOWS any saved login, so re-logging-in changes nothing until
+// INSTANT_TOKEN is fixed or unset. In that case we tell the user to fix/unset
+// the env var instead. A flag/saved-login token keeps the original `instant
+// login` guidance.
+//
 // IMPORTANT: keep the literal phrase "session expired" in the message — the
-// hermetic suite (and the project's "shipped ≠ verified" rules) grep for it.
+// hermetic suite, json_error.go's session_expired classifier, and the
+// project's "shipped ≠ verified" rules all grep for it. Both branches retain
+// it; only the trailing actionable clause differs.
 func errSessionExpired() error {
+	msg := "session expired — run `instant login` to re-authenticate"
+	if authFromEnvToken() {
+		msg = "session expired — INSTANT_TOKEN is set but the server rejected it; " +
+			"fix or unset INSTANT_TOKEN (it shadows any saved `instant login`)"
+	}
 	return &ExitCodeError{
 		Code: ExitSessionExpired,
-		Err:  errors.New("session expired — run `instant login` to re-authenticate"),
+		Err:  errors.New(msg),
 	}
 }
 

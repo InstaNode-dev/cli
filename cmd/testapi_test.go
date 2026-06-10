@@ -513,16 +513,24 @@ func (m *mockAPI) handleCredentials(w http.ResponseWriter, token string) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not found"})
 		return
 	}
-	if res.ConnectionURL == "" {
-		// Webhooks have no connection_url — mirror the real API.
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"ok": false, "error": "resource has no connection_url",
-		})
-		return
+	// Mirror the live GetCredentials shape (api/internal/handlers/resource.go):
+	// ok + id + token + resource_type + env + connection_url. A webhook has no
+	// connection_url — the real API 400s, but we surface receive_url so the
+	// `instant resource creds` webhook fallback (F1/F2) is exercisable.
+	out := map[string]any{
+		"ok":            true,
+		"id":            res.ID,
+		"token":         res.Token,
+		"resource_type": res.ResourceType,
+		"env":           res.Env,
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "connection_url": res.ConnectionURL,
-	})
+	if res.ConnectionURL != "" {
+		out["connection_url"] = res.ConnectionURL
+	}
+	if res.ReceiveURL != "" {
+		out["receive_url"] = res.ReceiveURL
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleDetail mirrors GET /api/v1/resources/:token from the real API.
