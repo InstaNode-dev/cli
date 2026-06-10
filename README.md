@@ -44,6 +44,24 @@ instant login                         # Log in to your instanode.dev account
 instant whoami                        # Show current account
 ```
 
+### Authentication
+
+`instant login` runs a browser device-flow and saves your credentials to
+`~/.instant-config`. If that flow times out, or you're on a headless box,
+skip it entirely with a **Personal Access Token**: mint one at
+[instanode.dev/app/settings](https://instanode.dev/app/settings), then
+authenticate any command in one of two ways:
+
+```bash
+instant --token <pat> resources      # per-invocation flag (highest priority)
+export INSTANT_TOKEN=<pat>           # environment variable for the session
+instant resources
+```
+
+Resolution order is `--token` flag → `INSTANT_TOKEN` env var → saved
+`instant login` credentials. Both PAT paths skip the browser entirely, so
+they're the recommended auth for CI and agent scripts.
+
 ### Targeting an environment
 
 Every `new` verb accepts an optional `--env` flag that the API honors
