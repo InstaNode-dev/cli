@@ -100,6 +100,17 @@ type mockAPI struct {
 	// provisioning response entirely — simulates an older API build that
 	// predates migration 026 so the CLI's empty-env fallback path runs.
 	omitEnvInProvision bool
+
+	// ── B-whoami — /auth/me validation modes ────────────────────────────
+	// rejectAuthMe makes GET /auth/me return 401 (token rejected) so the
+	// whoami "server says not authenticated" path can be exercised.
+	rejectAuthMe bool
+	// authMeStatus, when non-zero, overrides the /auth/me response status —
+	// used to drive the "unexpected status → treated as offline" branch.
+	authMeStatus int
+	// authMeBadBody, when true, returns a 200 with a non-JSON body so the
+	// whoami unmarshal-error (offline) branch runs.
+	authMeBadBody bool
 }
 
 // injectErrorOnProvision arms the mock to return a structured error envelope
@@ -254,6 +265,26 @@ func (m *mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/auth/me" && r.Method == http.MethodGet {
+		m.mu.Lock()
+		reject := m.rejectAuthMe
+		status := m.authMeStatus
+		badBody := m.authMeBadBody
+		m.mu.Unlock()
+		if reject {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"ok": false, "error": "invalid token",
+			})
+			return
+		}
+		if badBody {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("this is not json {"))
+			return
+		}
+		if status != 0 {
+			writeJSON(w, status, map[string]any{"ok": false, "error": "boom"})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{
 			"tier": "pro", "email": "tester@instanode.dev", "team_name": "Test Team",
 		})

@@ -318,6 +318,10 @@ func init() {
 			"Resource name (required, 1–64 chars, matches ^[A-Za-z0-9][A-Za-z0-9 _-]*$)")
 		c.Flags().StringVar(&resourceEnv, "env", "",
 			"Provisioning environment (default: server-side \"development\"; common: development|staging|production)")
+		// B-provision-json: parity with db/cache/nosql/queue — every
+		// provisioning verb honors --json (machine-readable token + url).
+		c.Flags().BoolVar(&provisionJSON, "json", false,
+			"Emit the provisioning result as a JSON object instead of human-readable lines")
 		_ = c.MarkFlagRequired("name")
 	}
 	storageCmd.AddCommand(storageNewCmd)

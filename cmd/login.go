@@ -48,6 +48,20 @@ var pollTimeout = 10 * time.Minute
 // is 5 minutes; tests lower it.
 var tierUpgradeTimeout = 5 * time.Minute
 
+// browserEnvVar is the conventional Unix variable naming a user's preferred
+// URL opener (e.g. `BROWSER=firefox` or `BROWSER='wslview'`). U2: honored
+// before the per-GOOS default so a headless/agent box with a custom opener
+// works without code changes. Named const so the env lookup has one spelling.
+const browserEnvVar = "BROWSER"
+
+// loginNoBrowser is bound to `instant login --no-browser`. U2: on a headless
+// agent box, attempting to spawn open/xdg-open/rundll32 is useless — it prints
+// "Could not open browser automatically" then blocks polling for 5 minutes
+// with no escape. With --no-browser the CLI prints the auth URL + session id
+// to stdout (so a human or supervising agent can open it elsewhere) and polls
+// without EVER trying to launch a browser.
+var loginNoBrowser bool
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in to instanode.dev and save credentials locally",
@@ -62,7 +76,11 @@ Subsequent commands will use it automatically for authenticated API calls.
 If you upgrade to a paid plan, run `+"`instant login`"+` again to refresh
 your tier — or the CLI will detect it automatically on the next API call.
 
-If the browser flow times out or you're on a headless machine, skip it:
+On a headless machine, pass `+"`--no-browser`"+`: the CLI prints the login URL
+and session id and polls without trying to launch a browser. It also honors the
+`+"`BROWSER`"+` environment variable when choosing how to open the URL.
+
+If the browser flow times out or you can't sign in at all, skip it:
 mint a Personal Access Token at https://instanode.dev/app/settings, then
 authenticate any command with `+"`instant --token <pat> ...`"+` or by exporting
 `+"`INSTANT_TOKEN=<pat>`"+` in your shell.
@@ -82,6 +100,10 @@ show exactly which resources you have running and pre-fill your plan.
 }
 
 func init() {
+	// U2: --no-browser makes login usable on headless/agent boxes — print the
+	// auth URL + session id and poll, never trying to spawn a browser.
+	loginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false,
+		"Print the login URL + session id and poll without launching a browser (headless/agent boxes)")
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(upgradeCmd)
 }
@@ -109,10 +131,20 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting login: %w", err)
 	}
 
-	// Step 2: Open the browser.
-	fmt.Printf("Opening browser to:\n  %s\n\n", session.AuthURL)
-	fmt.Println("Waiting for you to sign in… (Ctrl-C to cancel)")
-	openBrowser(session.AuthURL)
+	// Step 2: Surface the auth URL. U2: with --no-browser (headless / agent
+	// box) we print the URL + session id to stdout and NEVER attempt to launch
+	// a browser — spawning open/xdg-open on a headless host is useless and the
+	// failure message was followed by a 5-minute silent poll. The interactive
+	// happy path is unchanged: print + best-effort browser launch.
+	if loginNoBrowser {
+		fmt.Printf("Open this URL to sign in:\n  %s\n", session.AuthURL)
+		fmt.Printf("Session: %s\n\n", session.SessionID)
+		fmt.Println("Waiting for you to sign in… (Ctrl-C to cancel)")
+	} else {
+		fmt.Printf("Opening browser to:\n  %s\n\n", session.AuthURL)
+		fmt.Println("Waiting for you to sign in… (Ctrl-C to cancel)")
+		openBrowser(session.AuthURL)
+	}
 
 	// Step 3: Poll until the user completes auth or we time out.
 	result, err := pollForAuthCompletion(session.SessionID)
@@ -360,9 +392,19 @@ func safeBrowserURL(raw string) (string, error) {
 // not matching runtime.GOOS would otherwise be uncovered, which is what
 // our 100%-patch-coverage gate cares about).
 //
+// U2: $BROWSER takes precedence over the per-GOOS default on EVERY platform.
+// On a headless Linux agent there is no xdg-open, but the operator may export
+// `BROWSER=wslview` (WSL) or any custom opener; honoring it lets login work
+// without a code change. The $BROWSER value is treated as a bare command name
+// (no shell parsing) so a hostile config can't inject extra args — the safe
+// URL is passed as a single argument exactly as for the built-in helpers.
+//
 // nil result means "no known helper for this GOOS"; caller should skip the
 // exec attempt and tell the user to open the URL manually.
 func browserLauncherForGOOS(goos, safeURL string) (name string, args []string) {
+	if b := strings.TrimSpace(os.Getenv(browserEnvVar)); b != "" {
+		return b, []string{safeURL}
+	}
 	switch goos {
 	case "darwin":
 		return "open", []string{safeURL}
