@@ -21,6 +21,7 @@ package cmd
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,44 @@ func TestBugHunt_T16_P2_2_ProvisionTimeoutAtLeast60s(t *testing.T) {
 	if HTTPClient.Timeout < want {
 		t.Errorf("HTTPClient.Timeout = %v, want >= %v (T16 P2-2: 10s caused orphan resources under load)",
 			HTTPClient.Timeout, want)
+	}
+}
+
+// TestProvisionTimeout_SurfacesOrphanGuidance is the BUG 2 durability
+// regression: a provision that hits the client/context deadline must NOT exit
+// with a bare "context deadline exceeded" — the resource may have already
+// landed server-side (provisioning is synchronous on the api), so the user
+// needs an actionable next step to find + clean up the potential orphan.
+//
+// We point a short-timeout client at a server that never responds, forcing a
+// real client-timeout (*url.Error with Timeout()==true) through
+// provisionResource, and assert the named-const guidance is surfaced.
+func TestProvisionTimeout_SurfacesOrphanGuidance(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // hang until the client times out
+	}))
+	defer srv.Close()
+	defer close(block)
+
+	prevURL, prevClient := APIBaseURL, HTTPClient
+	APIBaseURL = srv.URL
+	HTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
+	t.Cleanup(func() { APIBaseURL, HTTPClient = prevURL, prevClient })
+
+	_, err := provisionResource("/db/new", "orphan-on-timeout", "")
+	if err == nil {
+		t.Fatal("provision against a hanging server must error (client timeout)")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, provisionTimeoutGuidance) {
+		t.Errorf("timeout error must surface orphan guidance %q; got %q", provisionTimeoutGuidance, msg)
+	}
+	// The guidance must name the recovery commands so an agent/user can act.
+	for _, want := range []string{"instant resources", "instant resource delete"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("timeout guidance must mention %q; got %q", want, msg)
+		}
 	}
 }
 

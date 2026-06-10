@@ -131,6 +131,58 @@ func TestRunResourceDetail_Success_JSON(t *testing.T) {
 	}
 }
 
+// TestRunResourceDetail_ItemEnvelopeRenders is the BUG 1 regression: prod
+// GET /api/v1/resources/:token wraps the object under "item"
+// ({"item":{...},"ok":true}). Before the fix the detail decoder only knew
+// the bare-object and "resource"-envelope shapes, so it rendered an all-empty
+// object with exit 0 (silent). This asserts the "item" key is unwrapped and
+// the fields actually render to stdout — mirroring how discover.go's list
+// path keys off "items".
+func TestRunResourceDetail_ItemEnvelopeRenders(t *testing.T) {
+	withCleanState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"item":{
+			"token":"tok-item","id":"id-item","resource_type":"postgres","name":"app-item",
+			"env":"production","tier":"pro","status":"active",
+			"connection_url":"postgres://u:p@x/db"
+		}}`))
+	}))
+	defer srv.Close()
+	prev := APIBaseURL
+	APIBaseURL = srv.URL
+	t.Cleanup(func() { APIBaseURL = prev })
+
+	// runResourceDetail short-circuits with errAuthRequired unless haveAuth()
+	// is true — wire an authTransport so the request actually reaches the mock.
+	prevClient := HTTPClient
+	HTTPClient = &http.Client{Transport: &authTransport{base: http.DefaultTransport, apiKey: "x"}}
+	t.Cleanup(func() { HTTPClient = prevClient })
+
+	stdout, _ := captureStdout(t, func() {
+		if err := runResourceDetail(nil, "tok-item"); err != nil {
+			t.Fatalf("runResourceDetail (item envelope): %v", err)
+		}
+	})
+
+	// The fields nested under "item" must render — an all-empty object is the
+	// pre-fix bug.
+	for _, want := range []string{
+		"tok-item",            // TOKEN
+		"id-item",             // ID
+		"postgres",            // TYPE
+		"app-item",            // NAME
+		"production",          // ENV
+		"pro",                 // TIER
+		"active",              // STATUS
+		"postgres://u:p@x/db", // URL
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("item-envelope detail must render %q; stdout=%q", want, stdout)
+		}
+	}
+}
+
 func TestRunResourceDelete_EmptyToken(t *testing.T) {
 	err := runResourceDelete(nil, "")
 	if err == nil || !strings.Contains(err.Error(), "token is required") {
