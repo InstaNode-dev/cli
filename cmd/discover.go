@@ -96,11 +96,13 @@ func runResources(cmd *cobra.Command) error {
 		if haveAuth() {
 			return errSessionExpired()
 		}
-		// In JSON mode the envelope is the only signal; skip the stderr
-		// hint so a `--json | jq` pipeline isn't disturbed.
-		if !jsonModeOn(cmd) {
-			fmt.Fprintln(os.Stderr, "Not logged in. Run `instant login` first.")
-		}
+		// De-dupe: previously this branch ALSO printed "Not logged in. Run
+		// `instant login` first." to stderr, then returned errAuthRequired —
+		// whose message main.go (run → Fprintln(stderr, err)) prints again.
+		// The user saw the not-logged-in guidance twice. Return the error
+		// silently and let main.go own the single print. (The errAuthRequired
+		// message already names `instant login`, so no guidance is lost; JSON
+		// mode is unaffected because nothing extra is written to stderr.)
 		return errAuthRequired("authentication required — run `instant login` first")
 	}
 

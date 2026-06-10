@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -67,20 +70,22 @@ func validateResourceName(name string) error {
 // storage / webhook / vector) MUST reject unknown sub-sub-commands with a
 // non-zero exit. The previous behaviour was:
 //
-//   instant db delete <id>   → prints help, exits 0
+//	instant db delete <id>   → prints help, exits 0
 //
 // which silently hid typo bugs in agent scripts and let `... | xargs instant`
 // pipelines look successful. The pattern below combines:
 //
-//   1. Args: cobra.NoArgs            — refuses any positional arg
-//   2. RunE: showGroupHelp           — when called with zero args, shows
-//                                      help and exits 0 (the legacy path)
-//   3. cobra's built-in "did you mean?" suggestions surface for typos that
-//      are within 2 edits of a valid subcommand (cobra default).
+//  1. Args: cobra.NoArgs            — refuses any positional arg
+//  2. RunE: showGroupHelp           — when called with zero args, shows
+//     help and exits 0 (the legacy path)
+//  3. cobra's built-in "did you mean?" suggestions surface for typos that
+//     are within 2 edits of a valid subcommand (cobra default).
 //
 // Together, `instant db delete <id>` now errors with:
-//   Error: unknown command "delete" for "instant db"
-//   Run 'instant db --help' for usage.
+//
+//	Error: unknown command "delete" for "instant db"
+//	Run 'instant db --help' for usage.
+//
 // and exits 1.
 func showGroupHelp(cmd *cobra.Command, args []string) error {
 	return cmd.Help()
@@ -248,6 +253,13 @@ func provisionResource(endpoint, name, env string) (*provisionResponse, error) {
 
 	resp, err := HTTPClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
+		// A provision that hit the client/context deadline may have ALREADY
+		// landed server-side (provisioning is synchronous on the api) — exit 1
+		// alone hides a possible orphan. Surface actionable durability guidance
+		// while preserving the underlying cause for %w-aware callers.
+		if isTimeoutErr(err) {
+			return nil, fmt.Errorf("%s (%w)", provisionTimeoutGuidance, err)
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -271,6 +283,27 @@ func provisionResource(endpoint, name, env string) (*provisionResponse, error) {
 		return nil, fmt.Errorf("unexpected response: ok=%v token=%q", result.OK, result.Token)
 	}
 	return &result, nil
+}
+
+// isTimeoutErr reports whether err is a request timeout — either the
+// http.Client.Timeout firing (surfaces as a net.Error with Timeout()==true,
+// wrapped in a *url.Error) or a context deadline being exceeded. Both mean the
+// provision request was abandoned client-side, so the resource may still be
+// landing server-side. Kept separate from json_error.go's network classifier
+// because that path emits a generic "network_error"; here we want the orphan
+// durability hint specifically on the timeout case.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
 }
 
 // ── status command ────────────────────────────────────────────────────────────

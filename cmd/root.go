@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/InstaNode-dev/cli/internal/cliconfig"
 	"github.com/InstaNode-dev/cli/internal/secretstore"
+	"github.com/spf13/cobra"
 )
 
 var _ = httpListTimeout // documented constant; referenced in tests / future refactor
@@ -62,6 +63,15 @@ const httpListTimeout = 10 * time.Second
 // Operators can override via INSTANT_TIMEOUT_SECONDS (uses int seconds for
 // CLI simplicity; <=0 falls back to the default).
 const httpProvisionTimeout = 60 * time.Second
+
+// provisionTimeoutGuidance is appended to a provision error when the request
+// hit the client/context deadline. Provisioning is synchronous server-side, so
+// a timeout does NOT mean the resource was not created — it may have landed and
+// become an orphan the user can't see. Surface an actionable next step rather
+// than a bare "context deadline exceeded". Named const (not an inline literal)
+// so the message is greppable + asserted by the timeout regression test.
+const provisionTimeoutGuidance = "Request timed out, but the resource may still be provisioning — " +
+	"run `instant resources` to check (and `instant resource delete <token> --yes` if it's an orphan)."
 
 // HTTPClient is the shared HTTP client used by all subcommands.
 // It is configured with the auth transport during init.
@@ -136,16 +146,90 @@ func ExecuteWithArgs(args []string) error {
 // gate is `instant --version | grep <sha>` — which can only be satisfied
 // if the linker actually stamped these vars.
 func SetBuildInfo(version, commit, buildTime string) {
-	if version == "" {
+	version, commit, buildTime = resolveBuildInfo(version, commit, buildTime, debug.ReadBuildInfo)
+	rootCmd.Version = fmt.Sprintf("%s (%s, %s)", version, commit, buildTime)
+}
+
+// buildInfoReader matches the signature of runtime/debug.ReadBuildInfo so
+// resolveBuildInfo can be driven with a stub in tests (the real VCS settings
+// only exist for binaries built from inside a git checkout, which a `go test`
+// process is not).
+type buildInfoReader func() (*debug.BuildInfo, bool)
+
+// resolveBuildInfo fills empty/sentinel ldflag values from the binary's
+// embedded VCS metadata.
+//
+// Background: a release build stamps Version/Commit/BuildTime via
+// `-ldflags -X`, so `instant --version` reads them directly. But a binary
+// produced by `go install github.com/InstaNode-dev/cli@latest` or a bare
+// `go build` has NO ldflags — pre-fix those printed the useless
+// `dev (unknown, unknown)`, defeating CLAUDE.md rule 14's build-SHA gate for
+// the most common install path (the README's `go install` one-liner).
+//
+// Go embeds VCS data (`vcs.revision`, `vcs.time`) in the BuildInfo of any
+// binary built from inside a VCS checkout. When the commit/buildTime are
+// unset we backfill from there, so `go install`/`go build` binaries print
+// the real short SHA + commit time instead of "unknown".
+//
+// IMPORTANT: "unset" means empty OR the sentinel — main.go declares
+// `Commit = "unknown"` / `BuildTime = "unknown"` / `Version = "dev"` as the
+// un-stamped defaults, so SetBuildInfo receives the SENTINEL (not ""), and a
+// naive `== ""` guard would never trigger the fallback. We treat the sentinels
+// as unset here. Sentinels survive only when neither ldflags NOR VCS data are
+// available (e.g. `go run`, or `-buildvcs=false`).
+func resolveBuildInfo(version, commit, buildTime string, read buildInfoReader) (string, string, string) {
+	var vcsRev, vcsTime string
+	if read != nil {
+		if info, ok := read(); ok && info != nil {
+			for _, s := range info.Settings {
+				switch s.Key {
+				case "vcs.revision":
+					vcsRev = s.Value
+				case "vcs.time":
+					vcsTime = s.Value
+				}
+			}
+		}
+	}
+
+	if isUnset(version, "dev") {
 		version = "dev"
 	}
-	if commit == "" {
-		commit = "unknown"
+	if isUnset(commit, "unknown") {
+		if vcsRev != "" {
+			commit = shortSHA(vcsRev)
+		} else {
+			commit = "unknown"
+		}
 	}
-	if buildTime == "" {
-		buildTime = "unknown"
+	if isUnset(buildTime, "unknown") {
+		if vcsTime != "" {
+			buildTime = vcsTime
+		} else {
+			buildTime = "unknown"
+		}
 	}
-	rootCmd.Version = fmt.Sprintf("%s (%s, %s)", version, commit, buildTime)
+	return version, commit, buildTime
+}
+
+// isUnset reports whether an ldflag value should be treated as not-stamped:
+// either the empty string or the package's sentinel default. main.go's
+// un-stamped defaults are sentinels (not ""), so the VCS fallback must key
+// off both forms.
+func isUnset(v, sentinel string) bool {
+	return v == "" || v == sentinel
+}
+
+// shortSHA truncates a full 40-char git revision to the 7-char short form the
+// rest of the platform uses (api/worker/provisioner /healthz emit short SHAs,
+// and rule 14 compares against `git rev-parse --short HEAD`). A shorter or
+// non-hex value is returned unchanged so a dirty/unexpected revision string
+// still surfaces rather than being silently mangled.
+func shortSHA(rev string) string {
+	if len(rev) >= 7 {
+		return rev[:7]
+	}
+	return rev
 }
 
 func init() {
@@ -273,4 +357,3 @@ func initConfig() {
 		},
 	}
 }
-

@@ -74,6 +74,12 @@ Track the upcoming native CLI support at:
   https://github.com/InstaNode-dev/cli/issues
 `,
 	Args: cobra.NoArgs,
+	// B15-P2 follow-up: tolerate unknown flags so `instant deploy --name foo`
+	// (or any flag an agent reaches for) lands on the helpful MCP/curl pointer
+	// instead of dying with cobra's `unknown flag: --name` BEFORE RunE runs.
+	// These are stub commands with no real flags of their own; the whole point
+	// is that any invocation shape reaches the "use this instead" message.
+	FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Print the long help (covers the alternative-surface pointers)
 		// and exit non-zero so scripts that test exit code don't proceed
@@ -94,6 +100,13 @@ func newDeployStub(verb, extra string) *cobra.Command {
 		Use:   verb,
 		Short: short,
 		Args:  cobra.ArbitraryArgs,
+		// Tolerate unknown flags (e.g. `instant deploy new --name foo --env
+		// production`) so the invocation reaches the MCP/curl pointer below
+		// instead of dying with cobra's `unknown flag: --name` pre-RunE. An
+		// agent that reflexively passes the real deploy flags must still land
+		// on the "use this instead" message — not a flag-parse error that
+		// looks like a bug in its own command construction.
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 				"`instant deploy %s` is not yet implemented in the CLI.\n"+
