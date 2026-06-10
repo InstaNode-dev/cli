@@ -141,15 +141,23 @@ func runResourceDetail(cmd *cobra.Command, token string) error {
 		return parseAPIError(resp.StatusCode, raw)
 	}
 
-	// The API may return the bare resource object OR an envelope:
-	// {ok:true, resource:{...}}. Accept either shape.
+	// The API may return the bare resource object OR an envelope. Prod
+	// GET /api/v1/resources/:token wraps the object under "item"
+	// ({"item":{...},"ok":true}); older/alternate shapes use "resource".
+	// Accept "item" first (today's prod), then "resource" (back-compat),
+	// then fall back to the bare object — so a future un-enveloped response
+	// still renders.
 	var envelope struct {
 		OK       bool            `json:"ok"`
+		Item     json.RawMessage `json:"item"`
 		Resource json.RawMessage `json:"resource"`
 	}
 	_ = json.Unmarshal(raw, &envelope)
 	body := raw
-	if len(envelope.Resource) > 0 {
+	switch {
+	case len(envelope.Item) > 0:
+		body = envelope.Item
+	case len(envelope.Resource) > 0:
 		body = envelope.Resource
 	}
 

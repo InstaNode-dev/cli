@@ -6,6 +6,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -139,4 +143,48 @@ func withTestAPI(t *testing.T, baseURL string) {
 		APIBaseURL = prevURL
 		HTTPClient = prevClient
 	})
+}
+
+// ── isTimeoutErr unit coverage ────────────────────────────────────────────────
+
+// fakeNetTimeoutErrMsg is the message carried by fakeNetTimeoutErr; named so
+// tests don't scatter string literals.
+const fakeNetTimeoutErrMsg = "dial tcp: i/o timeout (synthetic)"
+
+// fakeNetTimeoutErr is a minimal net.Error with a configurable Timeout().
+// It deliberately does NOT wrap context.DeadlineExceeded, so it exercises the
+// errors.As(net.Error) branch of isTimeoutErr rather than the errors.Is one
+// (an http.Client.Timeout error matches DeadlineExceeded first, leaving the
+// net.Error branch unreachable through provisionResource alone).
+type fakeNetTimeoutErr struct{ timeout bool }
+
+func (e fakeNetTimeoutErr) Error() string   { return fakeNetTimeoutErrMsg }
+func (e fakeNetTimeoutErr) Timeout() bool   { return e.timeout }
+func (e fakeNetTimeoutErr) Temporary() bool { return e.timeout }
+
+// TestIsTimeoutErr pins every branch of isTimeoutErr: the nil guard, the
+// context.DeadlineExceeded path, the net.Error-with-Timeout() path (including
+// when wrapped, as *url.Error does), and the non-timeout fallthrough.
+func TestIsTimeoutErr(t *testing.T) {
+	// Compile-time proof the fake satisfies net.Error.
+	var _ net.Error = fakeNetTimeoutErr{}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error is not a timeout", nil, false},
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"wrapped context deadline exceeded", fmt.Errorf("post: %w", context.DeadlineExceeded), true},
+		{"net.Error with Timeout()==true", fakeNetTimeoutErr{timeout: true}, true},
+		{"wrapped net.Error with Timeout()==true", fmt.Errorf("post: %w", fakeNetTimeoutErr{timeout: true}), true},
+		{"net.Error with Timeout()==false", fakeNetTimeoutErr{timeout: false}, false},
+		{"plain non-timeout error", errors.New("connection refused"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isTimeoutErr(tc.err))
+		})
+	}
 }

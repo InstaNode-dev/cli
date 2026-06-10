@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/InstaNode-dev/cli/internal/cliconfig"
 	"github.com/InstaNode-dev/cli/internal/secretstore"
+	"github.com/spf13/cobra"
 )
 
 var _ = httpListTimeout // documented constant; referenced in tests / future refactor
@@ -63,6 +63,15 @@ const httpListTimeout = 10 * time.Second
 // Operators can override via INSTANT_TIMEOUT_SECONDS (uses int seconds for
 // CLI simplicity; <=0 falls back to the default).
 const httpProvisionTimeout = 60 * time.Second
+
+// provisionTimeoutGuidance is appended to a provision error when the request
+// hit the client/context deadline. Provisioning is synchronous server-side, so
+// a timeout does NOT mean the resource was not created — it may have landed and
+// become an orphan the user can't see. Surface an actionable next step rather
+// than a bare "context deadline exceeded". Named const (not an inline literal)
+// so the message is greppable + asserted by the timeout regression test.
+const provisionTimeoutGuidance = "Request timed out, but the resource may still be provisioning — " +
+	"run `instant resources` to check (and `instant resource delete <token> --yes` if it's an orphan)."
 
 // HTTPClient is the shared HTTP client used by all subcommands.
 // It is configured with the auth transport during init.
@@ -348,4 +357,3 @@ func initConfig() {
 		},
 	}
 }
-
