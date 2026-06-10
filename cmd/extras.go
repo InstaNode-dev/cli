@@ -71,6 +71,10 @@ var resourceCmd = &cobra.Command{
 	Long: `Show, delete, or operate on a single resource by token.
 
   instant resource <token>             Print the resource's metadata + connection URL
+  instant resource creds <token>       Re-fetch the connection URL alone
+                                       (alias: credentials; GET …/credentials).
+                                       Recovers the URL after a provision that
+                                       timed out client-side before printing it.
   instant resource delete <token>      Tear down the resource. Requires --yes
                                        (or an interactive 'y' confirmation) to
                                        actually delete — printing nothing
@@ -96,6 +100,16 @@ listed in 'instant resources'.`,
 				return wrapJSONErr(cmd, fmt.Errorf("instant resource delete: token argument is required"))
 			}
 			return wrapJSONErr(cmd, runResourceDelete(cmd, args[1]))
+		case "creds", "credentials":
+			// F1 — re-fetch a resource's connection URL (GET …/credentials).
+			// Closes the broken first-provision recovery loop: `db new`
+			// frequently hits the 60s client timeout and the connection URL
+			// is otherwise lost forever (it's only printed by `new`). Handler
+			// lives in operate.go alongside the other GET-by-token verbs.
+			if len(args) < 2 {
+				return wrapJSONErr(cmd, fmt.Errorf("instant resource %s: token argument is required", verb))
+			}
+			return wrapJSONErr(cmd, runResourceCredentials(args[1]))
 		case "pause", "resume", "rotate", "backup", "backups":
 			// Wave-2 A4 operate verbs — handlers live in operate.go.
 			if len(args) < 2 {

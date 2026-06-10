@@ -172,19 +172,17 @@ func runResources(cmd *cobra.Command) error {
 		return nil
 	}
 
+	// F4: print the FULL token — it is the exact argument every other command
+	// (`instant resource <token>`, `… creds`, `… delete`, …) needs, so a
+	// truncated `d3cef90f-a75…` made the default list view un-copyable. The
+	// NAME column is truncated instead when it's long, since a name is
+	// human-facing and rarely the value being copied verbatim.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TOKEN\tTYPE\tNAME\tTIER\tSTATUS")
 	for _, r := range result.Items {
-		shortToken := r.Token
-		if len(shortToken) > 12 {
-			shortToken = shortToken[:12] + "…"
-		}
-		name := r.Name
-		if name == "" {
-			name = "-"
-		}
+		name := truncateName(r.Name)
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			shortToken, r.ResourceType, name, r.Tier, r.Status)
+			r.Token, r.ResourceType, name, r.Tier, r.Status)
 	}
 	_ = w.Flush()
 	return nil
@@ -245,6 +243,27 @@ func matchResourceFilters(filters map[string]string, rType, env, status, tier, n
 		}
 	}
 	return true
+}
+
+// nameDisplayMaxLen caps the NAME column in the `instant resources` table.
+// F4: the token now prints in full (it is the copy-paste argument every other
+// command needs); the human-facing NAME is the column we truncate when width
+// is tight. A trailing ellipsis signals truncation. "" renders as "-".
+const nameDisplayMaxLen = 24
+
+// truncateName renders a resource name for the table: "-" when empty, the
+// name unchanged when within nameDisplayMaxLen, else a one-ellipsis truncation.
+func truncateName(name string) string {
+	if name == "" {
+		return "-"
+	}
+	// Count runes (not bytes) so a multibyte name truncates on a character
+	// boundary and the column width math stays correct.
+	runes := []rune(name)
+	if len(runes) <= nameDisplayMaxLen {
+		return name
+	}
+	return string(runes[:nameDisplayMaxLen]) + "…"
 }
 
 // lower / eqFold — tiny strings helpers kept local so this file does not

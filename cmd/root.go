@@ -115,6 +115,7 @@ Examples:
   instant vector new --name app-vec   Provision a Postgres+pgvector resource
   instant resources                   List your provisioned resources (requires login)
   instant resource <token>            Show detail for a single resource by token
+  instant resource creds <token>      Re-fetch a resource's connection URL by token
   instant resource delete <token>     Delete a resource (use --yes to skip confirm)
   instant resource pause <token>      Suspend a resource without deleting it (Pro+)
   instant resource resume <token>     Un-pause a suspended resource (Pro+)

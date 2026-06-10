@@ -149,10 +149,10 @@ func TestClassifyError_GenericURLError(t *testing.T) {
 }
 
 func TestClassifyError_SessionExpired(t *testing.T) {
-	// errSessionExpired returns an *ExitCodeError with ExitAuthRequired,
-	// so classifyError catches it in the auth_required branch first. To
-	// reach the lowercase-contains("session expired") branch we need a
-	// plain error whose message contains the phrase.
+	// A plain (non-ExitCodeError) error carrying the phrase reaches the
+	// default-arm "session expired" classifier. (errSessionExpired's
+	// ExitCodeError variant is now handled inside the ExitAuthRequired arm
+	// after F3 — see TestClassifyError_AllBranches.)
 	err := errors.New("oops: session expired token")
 	c, _, _ := classifyError(err)
 	if c != "session_expired" {

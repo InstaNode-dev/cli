@@ -67,6 +67,7 @@ const (
 	resourceRotateSuffix = "/rotate-credentials"  // POST rotate password
 	resourceBackupSuffix = "/backup"              // POST ad-hoc backup (tier-gated)
 	resourceBackupsList  = "/backups"             // GET list backups
+	resourceCredsSuffix  = "/credentials"         // GET re-fetch connection URL (no rotation)
 )
 
 // operateJSON is the shared --json toggle for every operate-verb command.
@@ -583,6 +584,68 @@ func runResourceOperate(verb, token string) error {
 	}
 	if res.Message != "" {
 		fmt.Printf("note  %s\n", res.Message)
+	}
+	return nil
+}
+
+// ── resource creds (re-fetch the connection URL) ─────────────────────────────
+
+// resourceCredentialsResult mirrors GET /api/v1/resources/:id/credentials
+// (api/internal/handlers/resource.go GetCredentials). The real endpoint
+// returns connection_url plus the resource identity; ReceiveURL is decoded
+// too so a webhook-shaped response (receiver URL) still renders.
+type resourceCredentialsResult struct {
+	OK            bool   `json:"ok"`
+	ID            string `json:"id"`
+	Token         string `json:"token"`
+	ResourceType  string `json:"resource_type"`
+	Env           string `json:"env"`
+	ConnectionURL string `json:"connection_url"`
+	ReceiveURL    string `json:"receive_url"`
+}
+
+// runResourceCredentials re-fetches a resource's connection URL by token —
+// the recovery path for a provision whose `new` call hit the 60s client
+// timeout before printing the URL (the URL is otherwise unrecoverable). GETs
+// /api/v1/resources/:token/credentials and prints the connection_url (or the
+// webhook receive_url fallback); --json emits the full structured response.
+func runResourceCredentials(token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("token is required")
+	}
+	url := fmt.Sprintf("%s%s/%s%s", APIBaseURL, resourcesBasePath,
+		neturl.PathEscape(token), resourceCredsSuffix)
+	raw, err := doOperate(http.MethodGet, url, nil, true)
+	if err != nil {
+		return err
+	}
+	var res resourceCredentialsResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+	if resourceDetailJSON || operateJSON {
+		return emitJSON(res)
+	}
+	// Webhooks have no connection_url — fall back to receive_url so the
+	// receiver URL still surfaces (mirrors the provision + detail paths).
+	connURL := res.ConnectionURL
+	if connURL == "" {
+		connURL = res.ReceiveURL
+	}
+	tok := res.Token
+	if tok == "" {
+		tok = token
+	}
+	fmt.Printf("ok    creds  %s\n", tok)
+	if connURL != "" {
+		fmt.Printf("url   %s\n", connURL)
+	}
+	if res.ResourceType != "" {
+		fmt.Printf("type  %s\n", res.ResourceType)
+	}
+	if res.Env != "" {
+		fmt.Printf("env   %s\n", res.Env)
 	}
 	return nil
 }

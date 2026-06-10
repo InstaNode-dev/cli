@@ -178,13 +178,14 @@ func TestClassifyError_AllBranches(t *testing.T) {
 	if c, _, _ := classifyError(errResourceFailed(errors.New("x"))); c != "resource_failed" {
 		t.Errorf("resource -> %q", c)
 	}
-	// errSessionExpired is an *ExitCodeError with Code==ExitAuthRequired, so it
-	// classifies as auth_required (the switch matches the code before the
-	// message phrase). The dedicated "session_expired" branch is only reached
-	// for a *plain* error whose message contains the phrase.
-	if c, _, _ := classifyError(errSessionExpired()); c != "auth_required" {
+	// errSessionExpired is an *ExitCodeError with Code==ExitAuthRequired, but
+	// F3 now distinguishes a rejected-token "session expired" from a genuine
+	// "never authenticated" inside the ExitAuthRequired arm — so it classifies
+	// as session_expired (accurate code) rather than the old auth_required wart.
+	if c, _, _ := classifyError(errSessionExpired()); c != "session_expired" {
 		t.Errorf("session-as-exitcode -> %q", c)
 	}
+	// A plain error carrying the phrase still reaches the default-arm branch.
 	if c, _, _ := classifyError(errors.New("the session expired, sorry")); c != "session_expired" {
 		t.Errorf("session phrase -> %q", c)
 	}

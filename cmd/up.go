@@ -373,6 +373,23 @@ func haveAuth() bool {
 	return strings.TrimSpace(os.Getenv("INSTANT_TOKEN")) != ""
 }
 
+// authFromEnvToken reports whether the bearer token in play came from the
+// INSTANT_TOKEN env var (and NOT from a --token flag or a saved `instant
+// login`). Precedence mirrors initConfig: --token > INSTANT_TOKEN > saved
+// login — so the env is the source only when --token is empty AND
+// INSTANT_TOKEN is set.
+//
+// F3: a 401 against an INSTANT_TOKEN-sourced token must NOT advise `instant
+// login` — the env var SHADOWS any saved login, so re-logging-in changes
+// nothing until INSTANT_TOKEN is fixed or unset. errSessionExpired branches
+// its guidance on this.
+func authFromEnvToken() bool {
+	if strings.TrimSpace(adHocToken) != "" {
+		return false
+	}
+	return strings.TrimSpace(os.Getenv("INSTANT_TOKEN")) != ""
+}
+
 // errSessionExpiredSentinel is a private marker error returned by the
 // fetch helpers when the server returned 401 to an authenticated request.
 // Callers translate this into the user-facing errSessionExpired() so the
