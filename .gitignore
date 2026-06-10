@@ -6,3 +6,7 @@ bin/
 
 # GoReleaser snapshot/release artifacts
 dist/
+
+# Local coverage artifacts (CI regenerates these)
+coverage.out
+coverage.xml

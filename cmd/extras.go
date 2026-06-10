@@ -66,29 +66,42 @@ var vectorNewCmd = &cobra.Command{
 // stays the list view). `instant resource <token>` shows one resource;
 // `instant resource delete <token>` tears it down.
 var resourceCmd = &cobra.Command{
-	Use:   "resource <token> | delete <token>",
-	Short: "Show or delete a single resource by token",
-	Long: `Show or delete a single resource by token.
+	Use:   "resource <token> | <verb> <token>",
+	Short: "Show, delete, or operate on a single resource by token",
+	Long: `Show, delete, or operate on a single resource by token.
 
   instant resource <token>             Print the resource's metadata + connection URL
   instant resource delete <token>      Tear down the resource. Requires --yes
                                        (or an interactive 'y' confirmation) to
                                        actually delete — printing nothing
                                        destructive when --yes is absent.
+  instant resource pause <token>       Suspend without deleting (POST …/pause, Pro+)
+  instant resource resume <token>      Un-pause (POST …/resume, Pro+)
+  instant resource rotate <token>      Rotate credentials; prints the NEW
+                                       connection URL (POST …/rotate-credentials)
+  instant resource backup <token>      Queue an ad-hoc backup (POST …/backup, tier-gated)
+  instant resource backups <token>     List backups (GET …/backups)
 
 The token argument is the bearer token returned by 'instant <type> new' or
 listed in 'instant resources'.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// `instant resource delete <token>` routes here via the same parent;
-		// peel the verb off and dispatch. Done at RunE rather than as a real
-		// sub-sub-command so the natural `instant resource <token>` (no
+		// `instant resource <verb> <token>` routes here via the same parent;
+		// peel the verb off and dispatch. Done at RunE rather than as real
+		// sub-sub-commands so the natural `instant resource <token>` (no
 		// verb) reads as the detail view.
-		if args[0] == "delete" {
+		switch verb := args[0]; verb {
+		case "delete":
 			if len(args) < 2 {
 				return wrapJSONErr(cmd, fmt.Errorf("instant resource delete: token argument is required"))
 			}
 			return wrapJSONErr(cmd, runResourceDelete(cmd, args[1]))
+		case "pause", "resume", "rotate", "backup", "backups":
+			// Wave-2 A4 operate verbs — handlers live in operate.go.
+			if len(args) < 2 {
+				return wrapJSONErr(cmd, fmt.Errorf("instant resource %s: token argument is required", verb))
+			}
+			return wrapJSONErr(cmd, runResourceOperate(verb, args[1]))
 		}
 		return wrapJSONErr(cmd, runResourceDetail(cmd, args[0]))
 	},
