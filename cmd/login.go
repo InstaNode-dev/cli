@@ -18,6 +18,20 @@ import (
 	"github.com/InstaNode-dev/cli/internal/tokens"
 )
 
+// patWorkaroundHint is the single source of truth for the "your login timed
+// out — mint a PAT instead" signpost. It is surfaced in two places: the
+// pollForAuthCompletion timeout error (so a stranded user sees it the moment
+// the browser flow stalls) and the `instant login --help` long text (so a
+// user who already knows the device-flow is flaky finds the escape hatch
+// before they even start). The CLI already honours --token / INSTANT_TOKEN
+// (root.go initConfig priority chain) and instanode-web mints PATs at
+// /app/settings — but until this hint shipped the CLI never told a timed-out
+// user that path existed. Kept as a package const (not an inline literal) so
+// the two emitters can never drift (CLAUDE.md rule 16 — one token, all sites).
+const patWorkaroundHint = "Login timed out. Workaround: mint a Personal Access Token at " +
+	"https://instanode.dev/app/settings and run `instant --token <pat> ...` or " +
+	"`export INSTANT_TOKEN=<pat>`."
+
 // pollInterval is how often the CLI checks for auth completion.
 //
 // Declared as var (not const) so tests can lower it to milliseconds without
@@ -47,6 +61,11 @@ Subsequent commands will use it automatically for authenticated API calls.
 
 If you upgrade to a paid plan, run `+"`instant login`"+` again to refresh
 your tier — or the CLI will detect it automatically on the next API call.
+
+If the browser flow times out or you're on a headless machine, skip it:
+mint a Personal Access Token at https://instanode.dev/app/settings, then
+authenticate any command with `+"`instant --token <pat> ...`"+` or by exporting
+`+"`INSTANT_TOKEN=<pat>`"+` in your shell.
 `,
 	RunE: runLogin,
 }
@@ -244,7 +263,8 @@ func pollForAuthCompletion(sessionID string) (*authResult, error) {
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, raw)
 	}
 
-	return nil, fmt.Errorf("timed out waiting for login after %.0f minutes; try again", pollTimeout.Minutes())
+	return nil, fmt.Errorf("timed out waiting for login after %.0f minutes; try again.\n%s",
+		pollTimeout.Minutes(), patWorkaroundHint)
 }
 
 // pollForTierUpgrade polls GET /auth/me until the tier changes, up to 5 minutes.
