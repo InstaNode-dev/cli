@@ -110,6 +110,19 @@ Examples:
   instant resources                   List your provisioned resources (requires login)
   instant resource <token>            Show detail for a single resource by token
   instant resource delete <token>     Delete a resource (use --yes to skip confirm)
+  instant resource pause <token>      Suspend a resource without deleting it (Pro+)
+  instant resource resume <token>     Un-pause a suspended resource (Pro+)
+  instant resource rotate <token>     Rotate credentials, print the new URL
+  instant resource backup <token>     Queue an ad-hoc backup (paid tiers)
+  instant resource backups <token>    List a resource's backups
+  instant vault set <env> <key>       Write a secret to the team vault
+  instant vault rotate <env> <key>    Rotate a vault secret
+  instant deploy env <id> K=V         Merge env vars into a deployment
+  instant deploy wake <id>            Wake a scaled-to-zero deployment
+  instant deploy events <id>          Show a deployment's failure timeline
+  instant stack env <slug> K=V        Merge env vars into a stack
+  instant storage presign <token>     Mint a short-lived presigned S3 URL
+  instant capabilities                Show the per-tier capability matrix
   instant status                      Show locally tracked resources
   instant login                       Log in to your instanode.dev account
   instant logout                      Remove locally saved credentials

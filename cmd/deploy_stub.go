@@ -43,8 +43,13 @@ var deployCmd = &cobra.Command{
 	// The Short string surfaces in the root command list — that one row is
 	// the agent's first signal, so it has to carry the "use MCP or curl"
 	// pointer.
-	Short: "[stub — current MCP/API path: POST /deploy/new or create_deploy via MCP. CLI deploy verbs not yet implemented]",
-	Long: `Deploy commands are not implemented in the CLI yet.
+	Short: "[stub for build verbs — POST /deploy/new or create_deploy via MCP; native: env, wake, events]",
+	Long: `Deploy BUILD commands (new/list/get/logs/redeploy/delete) are not
+implemented in the CLI yet. The operate verbs ARE native:
+
+  instant deploy env <app-id> KEY=VALUE…   Merge env vars (PATCH /deploy/:id/env)
+  instant deploy wake <app-id>             Wake a scaled-to-zero app (POST /deploy/:id/wake)
+  instant deploy events <app-id>           Failure timeline (GET /api/v1/deployments/:id/events)
 
 The platform exposes the full deploy API at:
   POST   /deploy/new          (multipart tarball upload + build)

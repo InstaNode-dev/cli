@@ -121,6 +121,41 @@ sboms:
   - id: instant-sbom
     artifacts: archive
 
+# Homebrew tap (Wave-2 A4). Publishes a formula to InstaNode-dev/homebrew-tap
+# so `brew tap InstaNode-dev/tap && brew install instant` works.
+#
+# TOKEN SHAPE: pushing to the tap repo needs a PAT with `repo` scope on
+# InstaNode-dev/homebrew-tap, stored as the HOMEBREW_TAP_TOKEN secret on
+# THIS repo (the per-job GITHUB_TOKEN is scoped to InstaNode-dev/cli and
+# cannot push to the tap). Until the operator mints that PAT and runs
+# `gh secret set HOMEBREW_TAP_TOKEN -R InstaNode-dev/cli`, the skip_upload
+# guard below turns the formula push into a no-op — the release itself
+# still succeeds (binaries, checksums, signatures, SBOMs all land).
+# envOrDefault keeps local `goreleaser release` runs (no env var at all)
+# from failing template evaluation.
+brews:
+  - name: instant
+    repository:
+      owner: InstaNode-dev
+      name: homebrew-tap
+      branch: main
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+    directory: Formula
+    homepage: https://instanode.dev
+    description: "instanode.dev CLI — zero-friction developer infrastructure"
+    license: MIT
+    commit_author:
+      name: instanode-release-bot
+      email: noreply@instanode.dev
+    commit_msg_template: "chore: brew formula update for {{ .ProjectName }} {{ .Tag }}"
+    install: |
+      bin.install "instant"
+    test: |
+      system "#{bin}/instant", "--version"
+    # Resilient-by-default: skip the tap push (NOT the release) when the
+    # operator hasn't created HOMEBREW_TAP_TOKEN yet.
+    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_TOKEN" "" }}false{{ else }}true{{ end }}'
+
 release:
   github:
     owner: InstaNode-dev

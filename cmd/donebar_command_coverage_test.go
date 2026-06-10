@@ -95,6 +95,18 @@ var commandTestMap = map[string]string{
 	"instant deploy redeploy": "TestDeployStub_KnownVerbs",
 	"instant deploy delete":   "TestDeployStub_KnownVerbs",
 
+	// ── operate verbs (Wave-2 A4 — MCP parity, operate.go) ───────────────────
+	"instant vault":           "TestOperate_BareGroupsPrintHelp",
+	"instant vault set":       "TestOperate_VaultSet",
+	"instant vault rotate":    "TestOperate_VaultRotate",
+	"instant stack":           "TestOperate_BareGroupsPrintHelp",
+	"instant stack env":       "TestOperate_StackEnvPatch",
+	"instant deploy env":      "TestOperate_DeployEnvPatch",
+	"instant deploy wake":     "TestOperate_DeployWake",
+	"instant deploy events":   "TestOperate_DeployEvents",
+	"instant storage presign": "TestOperate_StoragePresign",
+	"instant capabilities":    "TestOperate_Capabilities",
+
 	// ── bundle / manifest ────────────────────────────────────────────────────
 	"instant up": "TestIntegration_UpProvisionsAndReconciles",
 

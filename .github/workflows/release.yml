@@ -71,3 +71,11 @@ jobs:
           # NOT a long-lived PAT. GoReleaser uses it to upload the
           # release artifacts to the same repo.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_TOKEN pushes the brew formula to
+          # InstaNode-dev/homebrew-tap (a cross-repo write the per-job
+          # GITHUB_TOKEN cannot do — it needs an operator-minted PAT with
+          # `repo` scope on the tap). When the secret is unset this
+          # resolves to "" and the brews.skip_upload guard in
+          # .goreleaser.yml skips the formula push WITHOUT failing the
+          # release.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
