@@ -219,14 +219,18 @@ func lastSavedToken(t *testing.T) string {
 func resetProvisionFlags() {
 	resourceName = ""
 	resourceEnv = ""
+	provisionJSON = false
 	for _, group := range []*cobra.Command{dbCmd, cacheCmd, nosqlCmd, queueCmd, storageCmd, webhookCmd, vectorCmd} {
 		for _, sub := range group.Commands() {
 			_ = sub.Flags().Set("name", "")
-			// --env is optional so it may not be bound on older builds; the
-			// Set call is best-effort and silently no-ops on a missing flag.
-			if fl := sub.Flags().Lookup("env"); fl != nil {
-				_ = fl.Value.Set("")
-				fl.Changed = false
+			// --env / --json are optional so they may not be bound on older
+			// builds; the Set call is best-effort and silently no-ops on a
+			// missing flag.
+			for _, flagName := range []string{"env", "json"} {
+				if fl := sub.Flags().Lookup(flagName); fl != nil {
+					_ = fl.Value.Set(fl.DefValue)
+					fl.Changed = false
+				}
 			}
 		}
 	}
@@ -388,11 +392,32 @@ func resetJSONFlags() {
 	resourcesJSON = false
 	statusJSON = false
 	whoamiJSON = false
+	provisionJSON = false
 	resourceDetailJSON = false
 	resourceDeleteYes = false
 	resourcesFilter = nil
 	resourcesLimit = 0
 	adHocToken = ""
+
+	// B-provision-json: the --json flag lives on the nested `<group> new`
+	// sub-sub-commands (db new, cache new, …), which the top-level loop below
+	// doesn't reach. Clear the per-command Changed state so a prior test's
+	// `--json` doesn't leak into the next via jsonModeOn's flag walk.
+	for _, group := range []string{"db", "cache", "nosql", "queue", "storage", "webhook", "vector"} {
+		for _, sub := range rootCmd.Commands() {
+			if sub.Use != group {
+				continue
+			}
+			for _, leaf := range sub.Commands() {
+				for _, flagName := range []string{"json", "name", "env"} {
+					if fl := leaf.Flags().Lookup(flagName); fl != nil {
+						_ = fl.Value.Set(fl.DefValue)
+						fl.Changed = false
+					}
+				}
+			}
+		}
+	}
 	for _, c := range []struct {
 		cmd  string
 		flag string

@@ -37,6 +37,15 @@ var nameRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _-]*$`)
 // resourceName is bound to the required --name flag on every `new` command.
 var resourceName string
 
+// provisionJSON is bound to the --json flag on every provisioning `new`
+// command (db/cache/nosql/queue/storage/webhook/vector). B-provision-json:
+// provisioning is the wedge action an agent most needs machine-readable — it
+// must capture the returned token + connection_url programmatically. Before
+// this flag, `instant db new --name x --json` failed with `unknown flag:
+// --json` and an agent had to scrape the human-readable lines. Matches the
+// --json convention already on resources/status/whoami/resource.
+var provisionJSON bool
+
 // resourceEnv is bound to the optional --env flag on every `new` command.
 //
 // CLI-MCP-8 (BugBash QA round 2): every provisioning verb on the CLI used to
@@ -155,7 +164,10 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 
 		creds, err := provisionResource(endpoint, name, resourceEnv)
 		if err != nil {
-			return fmt.Errorf("provisioning failed: %w", err)
+			// B-provision-json: in --json mode, errors funnel through the
+			// shared envelope so an agent piping into jq never crashes on a
+			// 402/429/network failure.
+			return wrapJSONErr(cmd, fmt.Errorf("provisioning failed: %w", err))
 		}
 
 		// Save token locally for `instant status` + B15-P1 (7) anon-up
@@ -183,11 +195,6 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 			})
 		}
 
-		fmt.Printf("ok    %-8s  %s\n", resourceType, creds.Token)
-		fmt.Printf("url   %s\n", creds.ConnectionURL)
-		if creds.Tier != "" {
-			fmt.Printf("tier  %s\n", creds.Tier)
-		}
 		// CLI-MCP-8: surface the resolved env (and env_override_reason when
 		// the server downgraded the request — e.g. anonymous caller asking
 		// for production gets demoted to development with a reason string).
@@ -196,6 +203,22 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 		envOut := creds.Env
 		if envOut == "" {
 			envOut = "development"
+		}
+
+		// B-provision-json: emit the full structured response so an agent can
+		// capture token + connection_url + environment in one machine-readable
+		// blob. Matches the two-space-indent convention of every other --json
+		// command. The resolved env is echoed under both `env` (raw server
+		// field) and `environment` (the /deploy/new-style alias) so an agent
+		// keys off whichever it already uses.
+		if provisionJSON {
+			return emitProvisionJSON(resourceType, creds, envOut)
+		}
+
+		fmt.Printf("ok    %-8s  %s\n", resourceType, creds.Token)
+		fmt.Printf("url   %s\n", creds.ConnectionURL)
+		if creds.Tier != "" {
+			fmt.Printf("tier  %s\n", creds.Tier)
 		}
 		fmt.Printf("env   %s\n", envOut)
 		if creds.EnvOverrideReason != "" {
@@ -206,6 +229,47 @@ func makeProvisionCmd(endpoint, resourceType string) func(*cobra.Command, []stri
 		}
 		return nil
 	}
+}
+
+// provisionJSONOutput is the stable schema emitted by every provisioning verb
+// under --json. It surfaces the full success response an agent needs to wire
+// up the resource: the token (for later `instant resource …` calls), the
+// connection_url (or receive_url for webhooks), the resolved environment, and
+// the tier/note/override metadata the human path already prints.
+type provisionJSONOutput struct {
+	OK                bool   `json:"ok"`
+	ResourceType      string `json:"resource_type"`
+	Token             string `json:"token"`
+	Name              string `json:"name"`
+	ConnectionURL     string `json:"connection_url,omitempty"`
+	ReceiveURL        string `json:"receive_url,omitempty"`
+	Tier              string `json:"tier,omitempty"`
+	Env               string `json:"env"`
+	Environment       string `json:"environment"`
+	EnvOverrideReason string `json:"env_override_reason,omitempty"`
+	Note              string `json:"note,omitempty"`
+}
+
+// emitProvisionJSON writes the structured provisioning result to stdout with
+// the shared two-space indentation. resolvedEnv is the env after the empty →
+// "development" fallback so the JSON never reports an empty environment.
+func emitProvisionJSON(resourceType string, creds *provisionResponse, resolvedEnv string) error {
+	out := provisionJSONOutput{
+		OK:                true,
+		ResourceType:      resourceType,
+		Token:             creds.Token,
+		Name:              creds.Name,
+		ConnectionURL:     creds.ConnectionURL,
+		ReceiveURL:        creds.ReceiveURL,
+		Tier:              creds.Tier,
+		Env:               resolvedEnv,
+		Environment:       resolvedEnv,
+		EnvOverrideReason: creds.EnvOverrideReason,
+		Note:              creds.Note,
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // provisionResponse is the shape returned by POST /{service}/new endpoints.
@@ -380,6 +444,10 @@ func init() {
 		c.Flags().StringVar(&resourceName, "name", "", "Resource name (required, 1–64 chars, matches ^[A-Za-z0-9][A-Za-z0-9 _-]*$)")
 		c.Flags().StringVar(&resourceEnv, "env", "",
 			"Provisioning environment (default: server-side \"development\"; common: development|staging|production)")
+		// B-provision-json: emit the full structured response (token,
+		// connection_url, environment, …) instead of the human-readable lines.
+		c.Flags().BoolVar(&provisionJSON, "json", false,
+			"Emit the provisioning result as a JSON object instead of human-readable lines")
 		_ = c.MarkFlagRequired("name")
 	}
 

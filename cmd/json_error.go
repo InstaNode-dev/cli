@@ -79,7 +79,7 @@ func jsonModeOn(cmd *cobra.Command) bool {
 	// Also honor the package-global toggles set by cobra's BoolVar bindings
 	// — these are how the existing whoami/resources/status commands carry
 	// the flag. They're already wired by the time RunE fires.
-	if resourcesJSON || statusJSON || whoamiJSON {
+	if resourcesJSON || statusJSON || whoamiJSON || provisionJSON {
 		return true
 	}
 	return false

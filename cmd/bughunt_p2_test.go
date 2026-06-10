@@ -448,8 +448,12 @@ func TestBugHunt_T16_P3_WhoamiJSONOutputNeverLeaksToken(t *testing.T) {
 	if out["authenticated"] != true {
 		t.Errorf("whoami --json: authenticated must be true; got %v", out["authenticated"])
 	}
-	if got, _ := out["email"].(string); got != "json-leak-test@example.com" {
-		t.Errorf("whoami --json email field: got %q", got)
+	// B-whoami: email is now the SERVER's authoritative identity from
+	// /auth/me (the mock returns tester@instanode.dev), not the stale local
+	// config — whoami validates against the server rather than reflecting the
+	// on-disk config it was previously a mirror of.
+	if got, _ := out["email"].(string); got != "tester@instanode.dev" {
+		t.Errorf("whoami --json email field (from /auth/me): got %q", got)
 	}
 	// `key_display` must exist but only carry the truncated form.
 	keyDisp, _ := out["key_display"].(string)

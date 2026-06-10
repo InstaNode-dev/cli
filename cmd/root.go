@@ -16,12 +16,18 @@ import (
 
 var _ = httpListTimeout // documented constant; referenced in tests / future refactor
 
+// defaultAPIBaseURL is the canonical production endpoint used when neither
+// INSTANT_API_URL nor a saved config supplies one. Named const (not an inline
+// literal) so every fallback site — initConfig here and whoami's api_url
+// resolver — references one source of truth and can never drift.
+const defaultAPIBaseURL = "https://api.instanode.dev"
+
 // APIBaseURL is the instanode.dev API base URL.
 // Resolved at init from (in priority order):
 //  1. INSTANT_API_URL env var
 //  2. ~/.instant-config api_base_url
 //  3. Default: https://api.instanode.dev
-var APIBaseURL = "https://api.instanode.dev"
+var APIBaseURL = defaultAPIBaseURL
 
 // adHocToken is bound to the global --token flag. B15-P2: ad-hoc auth
 // override that doesn't require exporting INSTANT_TOKEN or running
