@@ -152,14 +152,26 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Step 4: Save credentials.
+	// Step 4: Save credentials. cfg.Save() durably persists the bearer token —
+	// keychain when it's available AND the write survives an immediate
+	// read-back, otherwise the 0600 ~/.instant-config file fallback (the path
+	// that the next `instant whoami` / authenticated call reads). If Save
+	// returns an error NEITHER store accepted the token: we MUST NOT print
+	// "✓ Logged in" (the headless false-success this fix exists to kill).
+	// Instead hand the user the token + an explicit `export INSTANT_TOKEN=…`
+	// escape hatch so a headless agent can still proceed in-flow.
 	cfg.APIKey = result.APIKey
 	cfg.Email = result.Email
 	cfg.Tier = result.Tier
 	cfg.TeamName = result.TeamName
 	cfg.APIBaseURL = APIBaseURL
 	if err := cfg.Save(); err != nil {
-		return fmt.Errorf("saving credentials: %w", err)
+		return fmt.Errorf(
+			"login succeeded but the API key could not be saved to the keychain "+
+				"or to ~/.instant-config (%w).\nUse the token directly instead:\n"+
+				"  export INSTANT_TOKEN=%s\n"+
+				"…then re-run your command. (Avoid committing the token.)",
+			err, result.APIKey)
 	}
 
 	fmt.Printf("\n✓  Logged in as %s (%s)\n", result.Email, result.Tier)
