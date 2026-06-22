@@ -36,7 +36,7 @@ jobs:
       # Full history + tags are required so GoReleaser can read the tag
       # message and infer changelog scope.
       - name: Checkout (full history + tags)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
