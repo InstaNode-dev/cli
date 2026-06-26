@@ -96,6 +96,46 @@ func warnFileFallback() {
 	})
 }
 
+// secretGet/secretSet are package-level seams over the secretstore so tests
+// can inject a keychain that "succeeds" on Set but doesn't durably persist
+// (the headless/detached failure mode — see persistSecret). Production wires
+// them straight through; tests swap them in a t.Cleanup-guarded block.
+var (
+	secretSet = secretstore.Set
+	secretGet = secretstore.Get
+)
+
+// persistSecret durably stores the bearer token, returning true iff it landed
+// in the OS keychain AND survives an immediate read-back. It returns false
+// (caller must use the on-disk file fallback) when the keychain is either
+// unavailable (Set errors) OR reports success but the value does NOT round-trip
+// on a fresh Get — the silent detached/headless failure mode that this whole
+// change exists to close.
+//
+// WHY THE READ-BACK. `instant login` from a detached/headless process (e.g.
+// `nohup instant login &` on an agent box) hits a keychain backend whose
+// Available() probe is a FALSE POSITIVE: a probing Get that returns "not found"
+// is read as "available, just empty", and the subsequent Set returns nil even
+// though the write landed in an ephemeral/locked session keyring the NEXT
+// process can't read. Set's nil return is therefore NOT proof of durability.
+// Verifying the write by reading it straight back is the only signal that
+// distinguishes a real keychain entry from a write that evaporates — and it is
+// what flips the file-fallback branch on so the token actually persists.
+func persistSecret(apiKey string) bool {
+	if err := secretSet(apiKey); err != nil {
+		// Keychain unavailable / no active backend — caller writes the file.
+		return false
+	}
+	// Read-back verification: a keychain that accepted the write but can't
+	// return the same value (detached session, locked collection) is NOT a
+	// durable store. Treat a mismatch or read error exactly like a Set failure.
+	got, err := secretGet()
+	if err != nil || got != apiKey {
+		return false
+	}
+	return true
+}
+
 // IsAuthenticated reports whether the config holds valid credentials.
 func (c *Config) IsAuthenticated() bool {
 	return c != nil && c.APIKey != ""
@@ -177,14 +217,19 @@ func (c *Config) Save() error {
 	}
 	c.SavedAt = time.Now().UTC()
 
-	// Decide where the secret lives.
+	// Decide where the secret lives. persistSecret returns true ONLY when the
+	// key landed in the keychain AND survives an immediate read-back; a silent
+	// detached/headless write that doesn't round-trip returns false so we fall
+	// back to the 0600 on-disk field (which Load() already reads). This guards
+	// the "✓ Logged in but next whoami says Not logged in" headless regression.
 	persisted := false
 	c.FallbackAPIKey = ""
 	if c.APIKey != "" {
-		if err := secretstore.Set(c.APIKey); err == nil {
+		if persistSecret(c.APIKey) {
 			persisted = true
 		} else {
-			// Keychain unavailable — fall back to writing it on disk.
+			// Keychain unavailable OR write didn't survive read-back — fall
+			// back to writing the key on disk so the next invocation finds it.
 			c.FallbackAPIKey = c.APIKey
 			warnFileFallback()
 		}
